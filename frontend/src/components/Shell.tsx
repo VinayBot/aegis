@@ -119,7 +119,7 @@ export default function Shell() {
           animate={{ opacity: 1, y: 0 }}
           exit={reduced ? undefined : { opacity: 0, y: -8 }}
           transition={{ duration: 0.32, ease: EASE_UI }}
-          className="origin-top"
+          className="origin-top pb-32 sm:pb-0" // on phones, room to scroll the last controls clear of the docked robot
         >
           <Suspense fallback={<div className="min-h-[60vh]" aria-busy="true" />}>
             <Outlet />

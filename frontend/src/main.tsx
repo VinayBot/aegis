@@ -8,6 +8,7 @@ import { createRoot } from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import Shell from "./components/Shell";
 import Home from "./pages/Home";
+import NotFound from "./pages/NotFound";
 import { startLive } from "./lib/live";
 
 const Architecture = lazy(() => import("./pages/Architecture"));
@@ -31,6 +32,7 @@ const router = createBrowserRouter([
       { path: "/traces", element: <Traces /> },
       { path: "/docs", element: <Docs /> },
       { path: "/docs/:slug", element: <Docs /> },
+      { path: "*", element: <NotFound /> },
     ],
   },
 ]);

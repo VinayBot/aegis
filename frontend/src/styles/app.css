@@ -100,7 +100,7 @@ body {
 
 .prose-aegis { line-height: 1.65; color: var(--ink-soft); max-width: 72ch; }
 .prose-aegis h1, .prose-aegis h2, .prose-aegis h3 { color: var(--ink); font-family: var(--font-display); line-height: 1.15; margin: 2rem 0 0.75rem; }
-.prose-aegis h1 { font-size: 2.2rem; letter-spacing: -0.02em; }
+.prose-aegis h1, .prose-aegis .doc-title { font-size: 2.2rem; letter-spacing: -0.02em; }
 .prose-aegis h2 { font-size: 1.5rem; }
 .prose-aegis h3 { font-size: 1.15rem; }
 .prose-aegis p, .prose-aegis ul, .prose-aegis ol { margin: 0.75rem 0; }
@@ -132,7 +132,8 @@ body {
 
 /* React Flow theming: the graph lives on the dark deck */
 .react-flow { --xy-background-color: transparent; }
-.react-flow__attribution { display: none; }
+.react-flow__attribution { background: transparent; }
+.react-flow__attribution a { color: var(--ink-mute); }
 .react-flow__controls { box-shadow: none; }
 .react-flow__controls-button {
   background: var(--glass-strong); color: var(--ink); border-bottom: 1px solid var(--line);

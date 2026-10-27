@@ -1,4 +1,4 @@
-.PHONY: perf setup infra dev test test-backend test-frontend e2e lint typecheck build serve record-fixture memory assets clean
+.PHONY: perf sweep setup infra dev test test-backend test-frontend e2e lint typecheck build serve record-fixture memory assets clean
 
 setup: ## install everything (Python deps, spaCy model, Node deps, Playwright browser, models)
 	cd backend && uv sync
@@ -51,6 +51,9 @@ assets: ## rebuild the robot images and overlay regions from images/
 	swift scripts/cutout.swift var/art/hover-src.png var/art/hover-cut.png
 	swift scripts/cutout.swift var/art/standing-src.png var/art/standing-cut.png
 	uv run --no-project --with "pillow>=11.3" python scripts/build_assets.py
+
+sweep: ## every page at desktop and phone width: console errors, failed requests, overflow, a11y basics (needs `make dev`)
+	cd frontend && node tools/sweep.mjs
 
 perf: ## frame-time profile of the animated pages on the Mac GPU (needs `make dev`)
 	cd frontend && node tools/fps.mjs

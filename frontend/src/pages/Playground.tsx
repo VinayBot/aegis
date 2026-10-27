@@ -102,7 +102,7 @@ export default function Playground() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [busy, setBusy] = useState(false);
   const [rephrases, setRephrases] = useState(0);
-  const [batch, setBatch] = useState<{ label: string; results: StreamResult[] } | null>(null);
+  const [batch, setBatch] = useState<{ label: string; results: { status: number; cache: string }[] } | null>(null);
 
   useEffect(() => {
     if (mode !== "live") return;
@@ -129,9 +129,13 @@ export default function Playground() {
     setBusy(true);
     setBatch(null);
     try {
-      const body = { model, temperature, max_tokens: 80, messages: [{ role: "user", content: prompt }] };
-      const results = await Promise.all(Array.from({ length: 10 }, () => streamChat(body, { key, noCache })));
-      setBatch({ label: "10 identical requests at once", results });
+      // Fired by the gateway, not from here: a browser opens at most six streams per host, so the
+      // last four would queue behind the first answer instead of joining it.
+      const { results } = await api<{ results: { status: number; x_cache: string | null }[] }>("/api/playground/duplicate", {
+        method: "POST",
+        json: { n: 10, prompt, model, key, temperature, no_cache: noCache },
+      });
+      setBatch({ label: "10 identical requests at once", results: results.map((r) => ({ status: r.status, cache: r.x_cache ?? "" })) });
     } finally { setBusy(false); }
   };
   const resendRephrased = async () => {
@@ -188,15 +192,15 @@ export default function Playground() {
             <section className="glass p-5" aria-label="Batch result">
               <h2 className="font-semibold text-ink">{batch.label}</h2>
               <p className="mt-1 text-sm text-ink-soft">
-                {batch.results.filter((r) => r.headers["x-cache"] === "coalesced").length} coalesced ·{" "}
-                {batch.results.filter((r) => r.headers["x-cache"] === "miss" || r.headers["x-cache"] === "bypass").length} upstream call(s) ·{" "}
-                {batch.results.filter((r) => r.headers["x-cache"] === "hit" || r.headers["x-cache"] === "semantic").length} cache hit(s) ·{" "}
+                {batch.results.filter((r) => r.cache === "coalesced").length} coalesced ·{" "}
+                {batch.results.filter((r) => r.cache === "miss" || r.cache === "bypass").length} upstream call(s) ·{" "}
+                {batch.results.filter((r) => r.cache === "hit" || r.cache === "semantic").length} cache hit(s) ·{" "}
                 {batch.results.filter((r) => r.status !== 200).length} error(s)
               </p>
               <div className="mt-3 flex flex-wrap gap-1.5" aria-hidden="true">
                 {batch.results.map((r, i) => (
-                  <span key={i} className="rounded-md px-2 py-1 text-xs font-semibold" style={{ background: r.status !== 200 ? "var(--red-wash)" : r.headers["x-cache"] === "coalesced" ? "var(--violet-wash)" : "var(--cyan-wash)", color: r.status !== 200 ? "var(--red)" : r.headers["x-cache"] === "coalesced" ? "var(--violet)" : "var(--cyan)" }}>
-                    {r.status !== 200 ? r.status : r.headers["x-cache"]}
+                  <span key={i} className="rounded-md px-2 py-1 text-xs font-semibold" style={{ background: r.status !== 200 ? "var(--red-wash)" : r.cache === "coalesced" ? "var(--violet-wash)" : "var(--cyan-wash)", color: r.status !== 200 ? "var(--red)" : r.cache === "coalesced" ? "var(--violet)" : "var(--cyan)" }}>
+                    {r.status !== 200 ? r.status : r.cache}
                   </span>
                 ))}
               </div>

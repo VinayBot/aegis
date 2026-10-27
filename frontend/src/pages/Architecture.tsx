@@ -440,6 +440,7 @@ function Graph({ tab, follow, setFollow, onSelect, selfcheck, driver }: {
   const mode = useLive((s) => s.mode);
   const [hovered, setHovered] = useState<string | null>(null);
   const view: View = tab === "overview" ? "overview" : "detailed";
+  const pressed = useRef<string | null>(null);
   const rf = useReactFlow();
   const reduced = useReducedMotion();
   const followRef = useRef(follow);
@@ -471,7 +472,8 @@ function Graph({ tab, follow, setFollow, onSelect, selfcheck, driver }: {
   }, [view, rf, reduced, hasArch]);
 
   return (
-    <div className="relative h-full w-full">
+    <div className="relative h-full w-full"
+      onPointerDownCapture={(e) => { pressed.current = (e.target as Element).closest(".react-flow__node")?.getAttribute("data-id") ?? null; }}>
       <ReactFlow
         nodes={graph.nodes}
         edges={graph.edges}
@@ -484,11 +486,16 @@ function Graph({ tab, follow, setFollow, onSelect, selfcheck, driver }: {
         elementsSelectable
         minZoom={0.3}
         maxZoom={2}
-        proOptions={{ hideAttribution: true }}
         onNodeMouseEnter={(_, n) => view === "detailed" && setHovered(n.id)}
         onNodeMouseLeave={() => setHovered(null)}
         onNodeClick={(_, n) => onSelect(view === "detailed" ? (n.data as { node: ArchNode }).node : null)}
-        onPaneClick={() => onSelect(null)}
+        onPaneClick={() => {
+          // A tap (or a click with no hover first) highlights the node between press and release,
+          // which re-renders it, so the browser hands the click to the pane: honour the press.
+          const id = pressed.current;
+          const node = view === "detailed" && id ? arch?.nodes.find((n) => n.id === id) : undefined;
+          onSelect(node ?? null);
+        }}
         onMoveStart={(e) => {
           if (e && followRef.current) setFollow(false); // any manual pan cancels follow mode
         }}

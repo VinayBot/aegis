@@ -4,7 +4,8 @@
 //   hover:  it perks up: eyes widen, head turns to you, a little wiggle
 //   click:  it wakes (eyes flash, thrusters burst, a hop) and the chat opens
 // Clicking a suggestion in the bubble asks AEGIS that question for real. With reduced motion it
-// stays still and opens on click.
+// stays still and opens on click. On phones it is smaller and the bubble is hidden, so it never
+// sits over content.
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { useReducedMotion } from "../lib/motion";
@@ -79,14 +80,14 @@ export default function AssistantBot({ open, onOpen }: { open: boolean; onOpen: 
   const question = !hover && prompt > 0 ? PROMPTS[prompt] : undefined;
 
   return (
-    <div ref={self} className="fixed bottom-3 right-3 z-50 flex flex-col items-end">
+    <div ref={self} className="fixed bottom-3 right-3 z-50 flex origin-bottom-right scale-75 flex-col items-end sm:scale-100">
       <AnimatePresence mode="wait">
         {(ready || reduced) && (
           <motion.button key={text} type="button" onClick={() => void wake(question)}
             initial={reduced ? false : { opacity: 0, y: 6, scale: 0.92, filter: "blur(4px)" }}
             animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }} exit={{ opacity: 0, y: -4, scale: 0.96, filter: "blur(4px)" }}
             transition={{ type: "spring", stiffness: 320, damping: 26 }}
-            className="bot-bubble glass glass-strong glow-border is-live mr-2 max-w-[240px] px-3.5 py-2 text-left text-[0.85rem] font-semibold text-ink"
+            className="bot-bubble glass glass-strong glow-border is-live mr-2 hidden max-w-[240px] sm:block px-3.5 py-2 text-left text-[0.85rem] font-semibold text-ink"
             tabIndex={-1} aria-hidden="true">
             {text}
           </motion.button>

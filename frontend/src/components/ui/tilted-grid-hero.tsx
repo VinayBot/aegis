@@ -112,8 +112,7 @@ export function TiltedGridHero({
               style={{
                 left: `calc(50% - ${u(aspectRatio / 2)})`, top: `calc(${axis}% - ${u(0.5)})`, width: u(aspectRatio), height: u(1),
                 transformStyle: "preserve-3d",
-                animation: `${orbit} ${duration}s linear ${-t * speed}s infinite`,
-                animationPlayState: reduced ? "paused" : "running",
+                animation: `${orbit} ${duration}s linear ${-t * speed}s infinite ${reduced ? "paused" : "running"}`,
               }}
               onAnimationIteration={(e) => {
                 const lap = Math.round(e.elapsedTime / duration);
