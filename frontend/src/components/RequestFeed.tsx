@@ -47,7 +47,7 @@ export default function RequestFeed({ limit = 14 }: { limit?: number }) {
                 <td className="py-1.5 pr-2 font-tabular text-ink-mute">{fmtClock(e.ts)}</td>
                 <td className="py-1.5 pr-2">{String(e.tenant)}</td>
                 <td className="py-1.5 pr-2">
-                  <Link to={`/architecture?view=trace&request=${e.request_id}`} className="inline-flex items-center gap-1.5 hover:text-ink" title="Replay this request on the architecture graph">
+                  <Link to={`/architecture?view=detailed&request=${e.request_id}`} className="inline-flex items-center gap-1.5 hover:text-ink" title="Replay this request on the architecture graph">
                     <span className={`status-dot ${b.tone}`} aria-hidden="true" />{b.label}
                   </Link>
                 </td>

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import Chart, { type Series } from "../components/Chart";
 import HoverRobot, { useSystemMood } from "../components/HoverRobot";
 import LiveNumber from "../components/LiveNumber";
+import Mission from "../components/Mission";
 import RequestFeed from "../components/RequestFeed";
 import { fmtInt, fmtMs, fmtPct, fmtUsd } from "../lib/format";
 import { fetchTenants, useLive } from "../lib/live";
@@ -33,10 +34,10 @@ function Kpi({ label, value, prev, format, spark, color, betterWhen, sub }: {
   }
   return (
     <div className="glass glow-border p-5">
-      <dt className="text-sm text-ink-mute">{label}</dt>
-      <dd className="mt-1 font-display text-4xl font-semibold tracking-tight">
+      <p className="text-sm text-ink-mute">{label}</p>
+      <p className="mt-1 font-display text-4xl font-semibold tracking-tight">
         <LiveNumber value={value} format={format} className="gradient-num" />
-      </dd>
+      </p>
       <p className="mt-1 min-h-5 text-xs" style={{ color: delta ? (delta.good ? "var(--green)" : "var(--red)") : "var(--ink-faint)" }}>
         {delta ? delta.text : sub ?? "no change"}
       </p>
@@ -188,13 +189,15 @@ export default function ControlRoom() {
         </div>
       </div>
 
-      <dl className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-8"><Mission /></div>
+
+      <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Kpi label="Requests per second (last minute)" value={k?.current.rps} prev={k?.previous.rps} format={(n) => n.toFixed(2)} spark={s?.rps ?? []} color="--cyan" betterWhen="up" />
         <Kpi label="Time to first token, p95" value={k?.current.ttft_p95_ms} prev={k?.previous.ttft_p95_ms} format={fmtMs} spark={s?.ttft_p95 ?? []} color="--blue" betterWhen="down" sub="no model calls this minute" />
         <Kpi label="Cache hit rate" value={k?.current.hit_rate} prev={k?.previous.hit_rate} format={(n) => fmtPct(n)} spark={s?.hit_rate ?? []} color="--violet" betterWhen="up"
           sub={k?.current.hit_rate !== null && k ? `exact ${fmtPct(k.current.hit_rate_exact)} · semantic ${fmtPct(k.current.hit_rate_semantic)}` : "no lookups this minute"} />
         <Kpi label="Saved, est. cloud equivalent" value={metrics?.totals.saved_est_usd} prev={null} format={fmtUsd} spark={s?.saved ?? []} color="--cyan-hi" betterWhen="up" sub="all time, by cache and coalescing" />
-      </dl>
+      </div>
 
       {charts && metrics && s ? (
         <div className="mt-4 grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">

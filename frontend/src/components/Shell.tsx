@@ -4,7 +4,7 @@ import { useSystemMood } from "./HoverRobot";
 import { CursorGlow, EventTicker, SpotlightProvider, Warp } from "./fx";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useLive } from "../lib/live";
-import { EASE_UI, useReducedMotion } from "../lib/motion";
+import { EASE_UI, useMotionPause, useReducedMotion } from "../lib/motion";
 
 const Assistant = lazy(() => import("./Assistant"));
 const Aurora = lazy(() => import("./fx/Aurora"));
@@ -46,6 +46,16 @@ function ReplayBanner() {
   );
 }
 
+function MotionToggle() {
+  const paused = useMotionPause((s) => s.paused);
+  const toggle = useMotionPause((s) => s.toggle);
+  return (
+    <button type="button" onClick={toggle} aria-pressed={paused} className="hidden min-h-9 rounded-lg px-3 text-sm text-ink-mute hover:text-ink sm:block">
+      {paused ? "Resume motion" : "Pause motion"}
+    </button>
+  );
+}
+
 /** The whole screen edge pulses red while any breaker is open: real state, not decoration. */
 function Alarm() {
   const mood = useSystemMood();
@@ -84,6 +94,7 @@ export default function Shell() {
             ))}
           </ul>
           <div className="ml-auto flex items-center gap-4">
+            <MotionToggle />
             <LiveChip />
             <details className="relative lg:hidden">
               <summary className="btn btn-quiet list-none" aria-label="Open menu">Menu</summary>

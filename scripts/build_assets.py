@@ -145,6 +145,17 @@ def main() -> None:
         },
     }
     REGIONS.write_text(json.dumps(regions, indent=2) + "\n")
+
+    # Pictures of the site's own pages (frontend/tools/screens.mjs) for the tunnel and the reel.
+    screens = ROOT / "var" / "screens"
+    if screens.exists():
+        (OUT / "screens").mkdir(exist_ok=True)
+        for png in sorted(screens.glob("*.png")):
+            shot = Image.open(png).convert("RGB")
+            for w in (480, 800):
+                small = shot.resize((w, round(shot.height * w / shot.width)), Image.LANCZOS)
+                small.save(OUT / "screens" / f"{png.stem}-{w}.webp", "WEBP", quality=72, method=6)
+                small.save(OUT / "screens" / f"{png.stem}-{w}.avif", "AVIF", quality=55)
     for name, variants in report.items():
         for v in variants:
             print(f"{name:9} {v['path']:36} {v['bytes'] / 1024:7.1f} KB")

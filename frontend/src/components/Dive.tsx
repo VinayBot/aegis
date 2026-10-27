@@ -4,7 +4,7 @@
 // with a sticky stage, driven by Motion's useScroll. Reduced motion gets the same content as a
 // vertical run of static cards.
 import { motion, useScroll, useTransform, type MotionValue } from "motion/react";
-import { Suspense, lazy, useRef } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { HOVER } from "../config/robot";
 import { fmtInt, fmtMs, fmtPct, fmtUsd } from "../lib/format";
@@ -106,6 +106,15 @@ export default function Dive() {
   const live = useLiveNumbers();
   const ref = useRef<HTMLElement>(null);
   const near = useNearViewport(ref, "400px");
+  // The 3D scene (three.js, the largest chunk) loads on the first scroll, never during the first
+  // screen; the robot zoom that opens the dive covers the load.
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    const arm = () => setArmed(true);
+    window.addEventListener("scroll", arm, { once: true, passive: true });
+    if (window.scrollY > 0) arm();
+    return () => window.removeEventListener("scroll", arm);
+  }, []);
   const onScreen = useOnScreen(ref);
   const { scrollYProgress } = useScroll({ target: ref, offset: ["start start", "end end"] });
 
@@ -126,7 +135,7 @@ export default function Dive() {
       <div className="sticky top-0 h-screen overflow-hidden">
         <h2 id="dive-title" className="sr-only">Inside AEGIS: a dive through the gateway's five subsystems</h2>
         <motion.div style={{ opacity: brainOpacity }} className="absolute inset-0">
-          {near && (
+          {near && armed && (
             <Suspense fallback={null}>
               <Brain progress={scrollYProgress} active={onScreen} />
             </Suspense>

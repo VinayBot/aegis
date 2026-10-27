@@ -21,8 +21,10 @@ await page.goto("http://127.0.0.1:5173/", { waitUntil: "networkidle" }); await p
 await measure("home: hero idle", async () => {});
 await measure("home: scroll through dive", async () => { for (let i = 0; i < 40; i++) { await page.mouse.wheel(0, 120); await page.waitForTimeout(80); } }, 1500);
 await measure("home: meet stage + bot", async () => { await page.evaluate(() => document.querySelector("#meet-title")?.scrollIntoView()); });
-await page.goto("http://127.0.0.1:5173/architecture", { waitUntil: "networkidle" }); await page.waitForTimeout(2000);
+await page.goto("http://127.0.0.1:5173/architecture?view=detailed", { waitUntil: "networkidle" }); await page.waitForTimeout(2000);
 await measure("architecture: burst traffic", async () => { fetch("http://127.0.0.1:8000/api/playground/burst", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ n: 6 }) }); });
+await page.goto("http://127.0.0.1:5173/architecture", { waitUntil: "networkidle" }); await page.waitForTimeout(3000);
+await measure("architecture: 3D galaxy + traffic", async () => { fetch("http://127.0.0.1:8000/api/playground/burst", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ n: 6 }) }); });
 await page.goto("http://127.0.0.1:5173/control-room", { waitUntil: "networkidle" }); await page.waitForTimeout(2000);
 await measure("control room: idle", async () => {});
 await browser.close();

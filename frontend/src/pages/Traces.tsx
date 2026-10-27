@@ -126,7 +126,7 @@ export default function Traces() {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="font-display text-xl font-semibold">{selected.root}</h2>
                 <div className="flex gap-3 text-sm">
-                  {selected.request_id && <Link className="text-cyan underline underline-offset-2" to={`/architecture?view=trace&request=${selected.request_id}`}>Replay on the graph</Link>}
+                  {selected.request_id && <Link className="text-cyan underline underline-offset-2" to={`/architecture?view=detailed&request=${selected.request_id}`}>Replay on the graph</Link>}
                   <a className="text-cyan underline underline-offset-2" href={`${jaeger}/trace/${selected.trace_id}`} target="_blank" rel="noreferrer">Open in Jaeger</a>
                 </div>
               </div>

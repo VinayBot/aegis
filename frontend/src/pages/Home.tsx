@@ -1,4 +1,3 @@
-import { Suspense, lazy, useRef } from "react";
 import { Link } from "react-router-dom";
 import Dive from "../components/Dive";
 import HoverRobot from "../components/HoverRobot";
@@ -6,31 +5,19 @@ import LiveNumber from "../components/LiveNumber";
 import OrbitHud from "../components/OrbitHud";
 import { BlurWords, Magnetic, Reveal } from "../components/fx";
 import MeetStage from "../components/MeetStage";
+import PerspectiveTunnelHero, { type TunnelItem } from "@/components/ui/perspective-tunnel-hero";
 import { fmtInt, fmtPct, fmtUsd } from "../lib/format";
 import { useLive } from "../lib/live";
-import { useNearViewport, useOnScreen, useReducedMotion } from "../lib/motion";
 import { useUi } from "../lib/ui";
 
-const Starfield = lazy(() => import("../scenes/Starfield"));
 
 function Hero() {
-  const ref = useRef<HTMLElement>(null);
-  const onScreen = useOnScreen(ref);
-  const reduced = useReducedMotion();
-  const near = useNearViewport(ref);
   return (
-    <section ref={ref} aria-labelledby="hero-title" className="relative isolate overflow-hidden">
-      <div className="absolute inset-0 -z-10" aria-hidden="true">
-        {near && !reduced && (
-          <Suspense fallback={null}>
-            <Starfield active={onScreen} />
-          </Suspense>
-        )}
-      </div>
+    <section aria-labelledby="hero-title" className="relative isolate overflow-hidden">
       <div className="mx-auto grid min-h-[calc(100vh-4rem)] max-w-[1440px] items-center gap-10 px-[var(--gutter)] py-16 lg:grid-cols-[1.25fr_1fr]">
         <div>
           <h1 id="hero-title" className="font-display text-[clamp(2.5rem,5.3vw,5.6rem)] font-bold leading-[0.95] tracking-[-0.035em]">
-            <BlurWords text="AEGIS guards every model call." shimmer />
+            <span className="text-shimmer">AEGIS guards every model call.</span>
           </h1>
           <Reveal delay={0.5}>
             <p className="mt-6 max-w-[34ch] text-[clamp(1.1rem,1.6vw,1.35rem)] leading-relaxed text-ink-soft">
@@ -67,16 +54,16 @@ function ProofStrip() {
       <h2 id="proof-title" className="font-display text-4xl font-semibold tracking-tight md:text-6xl">
         <BlurWords text={mode === "replay" ? "What the gateway recorded" : "What the gateway has done so far"} />
       </h2>
-      <dl className="mt-12 grid gap-x-10 gap-y-12 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mt-12 grid gap-x-10 gap-y-12 sm:grid-cols-2 lg:grid-cols-4">
         {items.map((it) => (
           <div key={it.label} className="glass glow-border p-6">
-            <dd className="font-display text-[clamp(2.8rem,5vw,5rem)] font-semibold leading-none tracking-tight">
+            <p className="font-display text-[clamp(2.8rem,5vw,5rem)] font-semibold leading-none tracking-tight">
               <LiveNumber value={it.value} format={it.fmt} className="gradient-num" />
-            </dd>
-            <dt className="mt-3 max-w-[24ch] text-ink-mute">{it.label}{mode === "replay" ? " (replay)" : ""}</dt>
+            </p>
+            <p className="mt-3 max-w-[24ch] text-ink-mute">{it.label}{mode === "replay" ? " (replay)" : ""}</p>
           </div>
         ))}
-      </dl>
+      </div>
     </section>
   );
 }
@@ -106,12 +93,24 @@ function MeetAegis() {
   );
 }
 
+const DECK: TunnelItem[] = [
+  { src: "/assets/screens/architecture", title: "Architecture", about: "the live map of every request", to: "/architecture" },
+  { src: "/assets/screens/control-room", title: "Control Room", about: "gauges, heartbeat, tenants", to: "/control-room" },
+  { src: "/assets/screens/chaos", title: "Chaos Lab", about: "break it and watch it heal", to: "/chaos" },
+  { src: "/assets/screens/playground", title: "Playground", about: "send requests by hand", to: "/playground" },
+  { src: "/assets/screens/traces", title: "Traces", about: "every span, from Jaeger", to: "/traces" },
+  { src: "/assets/screens/assistant", title: "Ask AEGIS", about: "answers through the gateway", to: "/docs" },
+  { src: "/assets/screens/docs", title: "Docs", about: "how it all works", to: "/docs" },
+  { src: "/assets/screens/home", title: "The deck", about: "where you started", to: "/" },
+];
+
 export default function Home() {
   return (
     <>
       <Hero />
       <div id="enter" />
       <Dive />
+      <PerspectiveTunnelHero items={DECK} title="Into the deck." subtitle="Every screen of AEGIS is live. Fly through them, then click one to go in." />
       <ProofStrip />
       <MeetAegis />
       <footer className="px-[var(--gutter)] pb-16">

@@ -38,6 +38,8 @@
   --pad: radial-gradient(closest-side, rgba(116, 215, 247, 0.55), rgba(196, 162, 245, 0.25) 55%, transparent 75%);
   --meet-scrim: radial-gradient(ellipse at 50% 70%, rgba(10, 14, 40, 0.10), rgba(0, 0, 0, 0.6) 80%);
   --star: #eaf6ff;
+  --tunnel-glow: radial-gradient(circle at center, rgba(116, 215, 247, 0.12) 0%, transparent 70%);
+  --tunnel-scrim: linear-gradient(to top, rgba(0, 0, 0, 0.85), rgba(0, 0, 0, 0.15) 55%, transparent);
   --red-hi: #ffd0d6;
   --red-lo: #8a2030;
   --amber-hi: #ffe8c0;
@@ -48,7 +50,11 @@
   --meet-nebula: radial-gradient(ellipse 55% 45% at 50% 55%, rgba(60, 140, 220, 0.28), rgba(40, 60, 140, 0.12) 50%, transparent 75%);
   --scan-beam: linear-gradient(180deg, transparent 0%, rgba(184, 236, 255, 0) 42%, rgba(184, 236, 255, 0.55) 50%, rgba(184, 236, 255, 0) 58%, transparent 100%);
   --bot-shell-hi: #ffffff;
-  --bot-shell-lo: #c5d0ea;
+  --bot-shell-mid: #e3e9f7;
+  --bot-shell-lo: #9fb0d4;
+  --bot-warm: #ff9a5c;
+  --bot-lens-in: #3a1c2a;
+  --bot-lens-edge: #050812;
   --bot-dark: #0b1024;
   --bot-panel: #dfe6f7;
   --jet-metal: linear-gradient(180deg, #f4f7ff 0%, #c9d3ea 55%, #8e9bbd 100%);

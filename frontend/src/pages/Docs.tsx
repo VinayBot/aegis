@@ -7,6 +7,9 @@ import { NavLink, useParams } from "react-router-dom";
 import remarkGfm from "remark-gfm";
 import { api } from "../lib/api";
 import { useLive } from "../lib/live";
+import { TiltedGridHero } from "@/components/ui/tilted-grid-hero";
+
+const REEL = ["architecture", "control-room", "chaos", "playground", "traces", "assistant", "home", "docs"].map((n) => ({ src: `/assets/screens/${n}-800.webp`, alt: "" }));
 
 interface DocMeta { slug: string; title: string; path: string }
 
@@ -30,6 +33,13 @@ export default function Docs() {
   }, [current, mode]);
 
   return (
+    <>
+    <TiltedGridHero images={REEL} speed={4.5} tileHeight={34} axis={60} className="h-[420px] w-full">
+      <div className="relative z-10 flex h-full flex-col items-center justify-start pt-10 text-center">
+        <p className="text-shimmer font-display text-4xl font-semibold tracking-tight md:text-6xl">How AEGIS works</p>
+        <p className="mt-3 max-w-[46ch] px-6 text-ink-soft">The architecture, the decisions, the API and the demo, read from the same documents the AEGIS assistant answers from.</p>
+      </div>
+    </TiltedGridHero>
     <div className="mx-auto grid max-w-[1300px] gap-10 px-[var(--gutter)] py-10 lg:grid-cols-[240px_1fr]">
       <nav aria-label="Documents" className="lg:sticky lg:top-24 lg:self-start">
         <h1 className="font-display text-4xl font-semibold tracking-tight"><BlurWords text="Docs" shimmer /></h1>
@@ -51,5 +61,6 @@ export default function Docs() {
         {markdown && <ReactMarkdown remarkPlugins={[remarkGfm]}>{markdown}</ReactMarkdown>}
       </article>
     </div>
+    </>
   );
 }

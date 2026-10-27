@@ -1,272 +1,256 @@
-// "Inside the brain": a three.js neural interior in five layered regions, one per gateway
-// subsystem. Scroll progress (a motion value) drives the camera through them; each region runs a
-// small vignette of what that subsystem does. Layout is seeded and decorative; the numbers in the
-// captions come from the live gateway.
+// "Inside the brain": real neuron anatomy in three.js, under bloom. Each neuron has a glowing
+// cell body (soma), branching curved dendrites, and one long axon that ends in synaptic boutons
+// on another neuron. Action potentials travel down the axons and flash the cell they reach.
+//
+// The camera flies through five regions, one per gateway subsystem, and each region fires the
+// way its subsystem works:
+//   Gate      some signals are red and die halfway (blocked: PII, injection)
+//   Memory    violet signals, and the target cell lights up in recall
+//   Hive      every axon converges on one hub neuron (many requests, one upstream call)
+//   Reflexes  amber signals (hedges and failovers)
+//   Ledger    steady, rhythmic firing (every request recorded)
+// Layout and timing are seeded and decorative; the numbers on the captions are live.
 import { Canvas, useFrame } from "@react-three/fiber";
 import { Bloom, EffectComposer, Vignette } from "@react-three/postprocessing";
 import type { MotionValue } from "motion/react";
 import { useMemo, useRef } from "react";
 import * as THREE from "three";
-import { dotTexture } from "./sprite";
 import { mulberry32 } from "../lib/rng";
+import { dotTexture } from "./sprite";
 
 export const REGION_Z = [-8, -24, -40, -56, -72];
-const REGION_COLOR = ["#74d7f7", "#c4a2f5", "#79e8b3", "#ffc25c", "#b8ecff"];
-const NODES_PER_REGION = 70;
+const PER_REGION = 13;
+const PULSES = 150;
+const FLASHES = 40;
 
-interface Graph {
-  positions: Float32Array;
-  colors: Float32Array;
-  home: Float32Array;   // brain layout
-  flat: Float32Array;   // constellation layout for the exit
-  lines: Float32Array;
-  lineColors: Float32Array;
-  edges: [number, number][];
-}
+// WebGL cannot read CSS tokens, so the scene's palette is restated here from tokens.css.
+const C = {
+  dendrite: new THREE.Color("#1f5f86"),
+  dendriteTip: new THREE.Color("#0b1b2c"),
+  axon: new THREE.Color("#3f9fd0"),
+  soma: new THREE.Color("#c9f1ff"),
+  cyan: new THREE.Color("#8fe6ff"),
+  violet: new THREE.Color("#c9a8ff"),
+  amber: new THREE.Color("#ffc25c"),
+  red: new THREE.Color("#ff5a6e"),
+};
+const REGION_PULSE = [C.cyan, C.violet, C.cyan, C.amber, C.cyan];
 
-function buildGraph(): Graph {
-  const rnd = mulberry32(42);
-  const n = NODES_PER_REGION * REGION_Z.length;
-  const home = new Float32Array(n * 3);
-  const flat = new Float32Array(n * 3);
-  const colors = new Float32Array(n * 3);
+interface Neuron { pos: THREE.Vector3; region: number }
+interface Axon { from: number; to: number; points: THREE.Vector3[]; region: number }
+
+function grow(rnd: () => number) {
+  const neurons: Neuron[] = [];
   for (let r = 0; r < REGION_Z.length; r++) {
-    const col = new THREE.Color(REGION_COLOR[r]);
-    for (let k = 0; k < NODES_PER_REGION; k++) {
-      const i = r * NODES_PER_REGION + k;
+    for (let k = 0; k < PER_REGION; k++) {
       const a = rnd() * Math.PI * 2;
-      const rad = 1.2 + rnd() * 4.2;
-      home[i * 3] = Math.cos(a) * rad * 1.5;
-      home[i * 3 + 1] = Math.sin(a) * rad * 0.8;
-      home[i * 3 + 2] = REGION_Z[r] + (rnd() - 0.5) * 9;
-      // exit: each region becomes one column of the architecture constellation
-      flat[i * 3] = (r - 2) * 4.2 + (rnd() - 0.5) * 1.6;
-      flat[i * 3 + 1] = (k / NODES_PER_REGION - 0.5) * 7 + (rnd() - 0.5) * 0.3;
-      flat[i * 3 + 2] = -84;
-      colors.set([col.r, col.g, col.b], i * 3);
+      const rad = 1.4 + rnd() * 4.6;
+      neurons.push({ pos: new THREE.Vector3(Math.cos(a) * rad * 1.35, Math.sin(a) * rad * 0.75, REGION_Z[r] + (rnd() - 0.5) * 11), region: r });
     }
   }
-  const edges: [number, number][] = [];
-  for (let i = 0; i < n; i++) {
-    let best = -1;
-    let second = -1;
-    let bd = Infinity;
-    let sd = Infinity;
-    for (let j = 0; j < n; j++) {
-      if (i === j) continue;
-      const dx = home[i * 3] - home[j * 3];
-      const dy = home[i * 3 + 1] - home[j * 3 + 1];
-      const dz = home[i * 3 + 2] - home[j * 3 + 2];
-      const d = dx * dx + dy * dy + dz * dz;
-      if (d < bd) { second = best; sd = bd; best = j; bd = d; } else if (d < sd) { second = j; sd = d; }
+
+  // Dendrites: 5-7 curved branches per soma, each forking once or twice, fading to the tips.
+  const dSeg: number[] = [];
+  const dCol: number[] = [];
+  const fade = (t: number) => C.dendrite.clone().lerp(C.dendriteTip, Math.min(1, t));
+  const branch = (start: THREE.Vector3, dir: THREE.Vector3, length: number, depth: number, t0: number) => {
+    const steps = 7 + Math.floor(rnd() * 5);
+    let p = start.clone();
+    const d = dir.clone().normalize();
+    for (let i = 0; i < steps; i++) {
+      d.add(new THREE.Vector3((rnd() - 0.5) * 0.7, (rnd() - 0.5) * 0.7, (rnd() - 0.5) * 0.7)).normalize();
+      const q = p.clone().addScaledVector(d, length / steps);
+      const ta = t0 + (i / steps) * (1 - t0);
+      const tb = t0 + ((i + 1) / steps) * (1 - t0);
+      dSeg.push(p.x, p.y, p.z, q.x, q.y, q.z);
+      const a = fade(ta);
+      const b = fade(tb);
+      dCol.push(a.r, a.g, a.b, b.r, b.g, b.b);
+      if (depth < 2 && i > 2 && rnd() < 0.22) branch(q, d.clone().add(new THREE.Vector3(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5)), length * 0.55, depth + 1, tb);
+      p = q;
     }
-    if (best > i) edges.push([i, best]);
-    if (second > i && sd < 14) edges.push([i, second]);
+  };
+  for (const n of neurons) {
+    const count = 5 + Math.floor(rnd() * 3);
+    for (let b = 0; b < count; b++) branch(n.pos, new THREE.Vector3(rnd() - 0.5, rnd() - 0.5, (rnd() - 0.5) * 0.8), 0.9 + rnd() * 1.1, 0, 0);
   }
-  const lines = new Float32Array(edges.length * 6);
-  const lineColors = new Float32Array(edges.length * 6);
-  edges.forEach(([a, b], e) => {
-    lines.set([home[a * 3], home[a * 3 + 1], home[a * 3 + 2], home[b * 3], home[b * 3 + 1], home[b * 3 + 2]], e * 6);
-    lineColors.set([colors[a * 3], colors[a * 3 + 1], colors[a * 3 + 2], colors[b * 3], colors[b * 3 + 1], colors[b * 3 + 2]], e * 6);
+
+  // Axons: one per neuron, an arcing curve to another neuron. In the Hive every axon converges on
+  // one hub; elsewhere it reaches a near neighbour, sometimes in the next region.
+  const axons: Axon[] = [];
+  const hub = 2 * PER_REGION;
+  neurons.forEach((n, i) => {
+    let to = -1;
+    if (n.region === 2 && i !== hub) to = hub;
+    else {
+      let best = Infinity;
+      neurons.forEach((m, j) => {
+        if (j === i) return;
+        const d = n.pos.distanceTo(m.pos) + (m.region < n.region ? 40 : 0) + rnd() * 2.5;
+        if (d > 1.8 && d < best) {
+          best = d;
+          to = j;
+        }
+      });
+    }
+    if (to < 0) return;
+    const a = n.pos;
+    const b = neurons[to].pos;
+    const mid = a.clone().lerp(b, 0.5).add(new THREE.Vector3((rnd() - 0.5) * 2.2, (rnd() - 0.5) * 1.8 + 0.6, (rnd() - 0.5) * 1.5));
+    const mid2 = a.clone().lerp(b, 0.8).add(new THREE.Vector3((rnd() - 0.5) * 1, (rnd() - 0.5) * 1, 0));
+    axons.push({ from: i, to, points: new THREE.CatmullRomCurve3([a, mid, mid2, b]).getPoints(48), region: n.region });
   });
-  return { positions: home.slice(), colors, home, flat, lines, lineColors, edges };
+  const aSeg: number[] = [];
+  const aCol: number[] = [];
+  const boutons: number[] = [];
+  for (const ax of axons) {
+    for (let k = 0; k < ax.points.length - 1; k++) {
+      const p = ax.points[k];
+      const q = ax.points[k + 1];
+      aSeg.push(p.x, p.y, p.z, q.x, q.y, q.z);
+      const col = C.axon.clone().multiplyScalar(0.55 + 0.45 * Math.sin((k / ax.points.length) * Math.PI));
+      aCol.push(col.r, col.g, col.b, col.r, col.g, col.b);
+    }
+    const end = ax.points[ax.points.length - 1];
+    for (let s = 0; s < 4; s++) boutons.push(end.x + (rnd() - 0.5) * 0.35, end.y + (rnd() - 0.5) * 0.35, end.z + (rnd() - 0.5) * 0.35);
+  }
+  const somas = new Float32Array(neurons.length * 3);
+  neurons.forEach((n, i) => somas.set([n.pos.x, n.pos.y, n.pos.z], i * 3));
+  return {
+    neurons, axons, somas,
+    dendrites: new Float32Array(dSeg), dendriteColors: new Float32Array(dCol),
+    axonLines: new Float32Array(aSeg), axonColors: new Float32Array(aCol),
+    boutons: new Float32Array(boutons),
+  };
 }
 
-const PULSES = 140;
+interface Pulse { axon: number; t: number; speed: number; blocked: boolean; red: boolean; wait: number }
+interface Flash { pos: THREE.Vector3; t: number; color: THREE.Color }
 
-function Network({ progress }: { progress: MotionValue<number> }) {
-  const g = useMemo(() => buildGraph(), []);
-  const points = useRef<THREE.Points>(null);
-  const lines = useRef<THREE.LineSegments>(null);
-  const pulses = useRef<THREE.Points>(null);
-  const pulseState = useMemo(() => {
-    const rnd = mulberry32(9);
-    return Array.from({ length: PULSES }, () => ({ edge: Math.floor(rnd() * g.edges.length), t: rnd(), speed: 0.25 + rnd() * 0.6 }));
-  }, [g]);
-  const pulsePos = useMemo(() => new Float32Array(PULSES * 3), []);
-  const rnd = useMemo(() => mulberry32(3), []);
+function Cortex({ progress }: { progress: MotionValue<number> }) {
+  const anatomy = useMemo(() => grow(mulberry32(42)), []);
+  const rnd = useMemo(() => mulberry32(7), []);
+  const pulseGeo = useRef<THREE.BufferGeometry>(null);
+  const flashGeo = useRef<THREE.BufferGeometry>(null);
+  const somaMat = useRef<THREE.PointsMaterial>(null);
+
+  const pulses = useMemo<Pulse[]>(() => Array.from({ length: PULSES }, () => ({ axon: 0, t: 0, speed: 0, blocked: false, red: false, wait: rnd() * 3 })), [rnd]);
+  const pulsePos = useMemo(() => new Float32Array(PULSES * 3 * 3).fill(-999), []);
+  const pulseCol = useMemo(() => new Float32Array(PULSES * 3 * 3), []);
+  const flashes = useMemo<Flash[]>(() => Array.from({ length: FLASHES }, () => ({ pos: new THREE.Vector3(0, -999, 0), t: 9, color: C.cyan })), []);
+  const flashPos = useMemo(() => new Float32Array(FLASHES * 3), []);
+  const flashCol = useMemo(() => new Float32Array(FLASHES * 3), []);
+  const nextFlash = useRef(0);
 
   useFrame((state, dt) => {
-    const p = progress.get();
-    // camera: 0.18 -> 0.84 flies through the regions; then pulls back for the constellation
-    const fly = THREE.MathUtils.clamp((p - 0.16) / 0.68, 0, 1);
-    const exit = THREE.MathUtils.clamp((p - 0.84) / 0.14, 0, 1);
+    const prog = progress.get();
+    const fly = THREE.MathUtils.clamp((prog - 0.16) / 0.7, 0, 1);
+    const exit = THREE.MathUtils.clamp((prog - 0.86) / 0.12, 0, 1);
     const cam = state.camera;
-    cam.position.z = THREE.MathUtils.lerp(4, REGION_Z[4] + 6, fly) + exit * -2;
-    cam.position.x = Math.sin(fly * Math.PI * 2) * 1.2 * (1 - exit);
-    cam.position.y = Math.cos(fly * Math.PI * 3) * 0.5 * (1 - exit);
-    cam.lookAt(0, 0, cam.position.z - 10);
+    // fly down the cortex, then rise and pull back to see the whole network at once
+    cam.position.z = THREE.MathUtils.lerp(4, REGION_Z[4] + 6, fly) + exit * 34;
+    cam.position.x = Math.sin(fly * Math.PI * 2) * 1.3 * (1 - exit) + exit * 12;
+    cam.position.y = Math.cos(fly * Math.PI * 3) * 0.6 * (1 - exit) + exit * 9;
+    cam.lookAt(0, 0, THREE.MathUtils.lerp(cam.position.z - 10, -40, exit));
+    if (somaMat.current) somaMat.current.size = 0.42 + Math.sin(state.clock.elapsedTime * 1.7) * 0.05;
 
-    // exit morph: nodes ease from the brain into the constellation columns
-    const k = exit * exit * (3 - 2 * exit);
-    const pos = g.positions;
-    for (let i = 0; i < pos.length; i++) pos[i] = g.home[i] + (g.flat[i] - g.home[i]) * k;
-    if (points.current) points.current.geometry.attributes.position.needsUpdate = true;
-    if (lines.current) {
-      const lp = lines.current.geometry.attributes.position.array as Float32Array;
-      g.edges.forEach(([a, b], e) => {
-        lp[e * 6] = pos[a * 3]; lp[e * 6 + 1] = pos[a * 3 + 1]; lp[e * 6 + 2] = pos[a * 3 + 2];
-        lp[e * 6 + 3] = pos[b * 3]; lp[e * 6 + 4] = pos[b * 3 + 1]; lp[e * 6 + 5] = pos[b * 3 + 2];
-      });
-      lines.current.geometry.attributes.position.needsUpdate = true;
-      (lines.current.material as THREE.LineBasicMaterial).opacity = 0.22 - 0.12 * k;
-    }
-
-    // pulses travel along synapses
     for (let i = 0; i < PULSES; i++) {
-      const s = pulseState[i];
-      s.t += dt * s.speed;
-      if (s.t > 1) {
-        s.t = 0;
-        s.edge = Math.floor(rnd() * g.edges.length);
+      const p = pulses[i];
+      if (p.wait > 0) {
+        p.wait -= dt;
+        if (p.wait <= 0) {
+          p.axon = Math.floor(rnd() * anatomy.axons.length);
+          const region = anatomy.axons[p.axon].region;
+          p.t = 0;
+          p.speed = region === 4 ? 0.55 : 0.35 + rnd() * 0.45;
+          p.red = region === 0 && rnd() < 0.3;
+          p.blocked = p.red;
+        } else {
+          for (let k = 0; k < 3; k++) pulsePos.set([0, -999, 0], (i * 3 + k) * 3);
+          continue;
+        }
       }
-      const [a, b] = g.edges[s.edge];
-      for (let c = 0; c < 3; c++) pulsePos[i * 3 + c] = pos[a * 3 + c] + (pos[b * 3 + c] - pos[a * 3 + c]) * s.t;
+      p.t += dt * p.speed;
+      const ax = anatomy.axons[p.axon];
+      if (p.t >= (p.blocked ? 0.5 : 1)) {
+        if (!p.blocked) {
+          const f = flashes[nextFlash.current++ % FLASHES];
+          f.pos.copy(anatomy.neurons[ax.to].pos);
+          f.t = 0;
+          f.color = REGION_PULSE[ax.region];
+        }
+        p.wait = 0.2 + rnd() * 1.8;
+        continue;
+      }
+      const color = p.red ? C.red : REGION_PULSE[ax.region];
+      const dim = p.blocked ? 1 - Math.max(0, (p.t - 0.35) / 0.15) : 1;
+      for (let k = 0; k < 3; k++) {
+        const tt = Math.max(0, p.t - k * 0.025);
+        const pt = ax.points[Math.min(ax.points.length - 1, Math.floor(tt * (ax.points.length - 1)))];
+        pulsePos.set([pt.x, pt.y, pt.z], (i * 3 + k) * 3);
+        const s = dim * (1 - k * 0.3);
+        pulseCol.set([color.r * s, color.g * s, color.b * s], (i * 3 + k) * 3);
+      }
     }
-    if (pulses.current) pulses.current.geometry.attributes.position.needsUpdate = true;
+    if (pulseGeo.current) {
+      pulseGeo.current.attributes.position.needsUpdate = true;
+      pulseGeo.current.attributes.color.needsUpdate = true;
+    }
+
+    for (let i = 0; i < FLASHES; i++) {
+      const f = flashes[i];
+      f.t += dt;
+      const s = Math.max(0, 1 - f.t / 0.7);
+      flashPos.set([f.pos.x, f.pos.y, f.pos.z], i * 3);
+      flashCol.set([f.color.r * s, f.color.g * s, f.color.b * s], i * 3);
+    }
+    if (flashGeo.current) {
+      flashGeo.current.attributes.position.needsUpdate = true;
+      flashGeo.current.attributes.color.needsUpdate = true;
+    }
   });
 
   return (
     <group>
-      <lineSegments ref={lines}>
+      <lineSegments>
         <bufferGeometry>
-          <bufferAttribute attach="attributes-position" args={[g.lines, 3]} />
-          <bufferAttribute attach="attributes-color" args={[g.lineColors, 3]} />
+          <bufferAttribute attach="attributes-position" args={[anatomy.dendrites, 3]} />
+          <bufferAttribute attach="attributes-color" args={[anatomy.dendriteColors, 3]} />
         </bufferGeometry>
-        <lineBasicMaterial vertexColors transparent opacity={0.22} depthWrite={false} blending={THREE.AdditiveBlending} />
+        <lineBasicMaterial vertexColors transparent opacity={0.9} depthWrite={false} blending={THREE.AdditiveBlending} />
       </lineSegments>
-      <points ref={points}>
+      <lineSegments>
         <bufferGeometry>
-          <bufferAttribute attach="attributes-position" args={[g.positions, 3]} />
-          <bufferAttribute attach="attributes-color" args={[g.colors, 3]} />
+          <bufferAttribute attach="attributes-position" args={[anatomy.axonLines, 3]} />
+          <bufferAttribute attach="attributes-color" args={[anatomy.axonColors, 3]} />
         </bufferGeometry>
-        <pointsMaterial map={dotTexture()} alphaTest={0.01} size={0.3} vertexColors transparent opacity={0.95} depthWrite={false} blending={THREE.AdditiveBlending} />
-      </points>
-      <points ref={pulses}>
+        <lineBasicMaterial vertexColors transparent opacity={0.55} depthWrite={false} blending={THREE.AdditiveBlending} />
+      </lineSegments>
+      <points>
         <bufferGeometry>
+          <bufferAttribute attach="attributes-position" args={[anatomy.somas, 3]} />
+        </bufferGeometry>
+        <pointsMaterial ref={somaMat} map={dotTexture()} alphaTest={0.01} size={0.42} color={C.soma} transparent depthWrite={false} blending={THREE.AdditiveBlending} />
+      </points>
+      <points>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" args={[anatomy.boutons, 3]} />
+        </bufferGeometry>
+        <pointsMaterial map={dotTexture()} alphaTest={0.01} size={0.09} color={C.cyan} transparent opacity={0.8} depthWrite={false} blending={THREE.AdditiveBlending} />
+      </points>
+      <points>
+        <bufferGeometry ref={pulseGeo}>
           <bufferAttribute attach="attributes-position" args={[pulsePos, 3]} />
+          <bufferAttribute attach="attributes-color" args={[pulseCol, 3]} />
         </bufferGeometry>
-        <pointsMaterial map={dotTexture()} alphaTest={0.01} size={0.36} color="#b8ecff" transparent opacity={0.95} depthWrite={false} blending={THREE.AdditiveBlending} />
+        <pointsMaterial map={dotTexture()} alphaTest={0.01} size={0.26} vertexColors transparent depthWrite={false} blending={THREE.AdditiveBlending} />
       </points>
-      <Vignettes progress={progress} />
-    </group>
-  );
-}
-
-// One small story per region, built from instanced points.
-function Vignettes({ progress }: { progress: MotionValue<number> }) {
-  const gate = useRef<THREE.Points>(null);
-  const memory = useRef<THREE.Points>(null);
-  const memoryHit = useRef<THREE.Mesh>(null);
-  const hive = useRef<THREE.Points>(null);
-  const reflexA = useRef<THREE.Line>(null);
-  const reflexB = useRef<THREE.Line>(null);
-  const reflexDot = useRef<THREE.Mesh>(null);
-  const ledger = useRef<THREE.Points>(null);
-  const clock = useRef(0);
-
-  const gateN = 60;
-  const gatePos = useMemo(() => new Float32Array(gateN * 3), []);
-  const gateCol = useMemo(() => {
-    const c = new Float32Array(gateN * 3);
-    for (let i = 0; i < gateN; i++) {
-      const pii = i % 7 === 0;
-      c.set(pii ? [1, 0.42, 0.48] : [0.45, 0.84, 0.97], i * 3);
-    }
-    return c;
-  }, []);
-  const hivePos = useMemo(() => new Float32Array(10 * 3), []);
-  const ledgerPos = useMemo(() => new Float32Array(40 * 3), []);
-  const memPos = useMemo(() => new Float32Array(3), []);
-  const pathA = useMemo(() => new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-3, 0.6, -56), new THREE.Vector3(0, 1.4, -56), new THREE.Vector3(3, 0.6, -56)]), []);
-  const pathB = useMemo(() => new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-3, 0.6, -56), new THREE.Vector3(0, -1.3, -56), new THREE.Vector3(3, 0.6, -56)]), []);
-  const lineA = useMemo(() => new THREE.Line(pathA, new THREE.LineBasicMaterial({ color: "#74d7f7", transparent: true })), [pathA]);
-  const lineB = useMemo(() => new THREE.Line(pathB, new THREE.LineBasicMaterial({ color: "#ffc25c", transparent: true })), [pathB]);
-
-  useFrame((_, dt) => {
-    clock.current += dt;
-    const t = clock.current;
-    const visible = progress.get() > 0.12 && progress.get() < 0.9;
-    if (!visible) return;
-    // Gate: a stream flows right; PII shards (red) drop out of it at the gate line x=0.
-    for (let i = 0; i < gateN; i++) {
-      const u = ((t * 0.35 + i / gateN) % 1) * 2 - 1;
-      const pii = i % 7 === 0;
-      const x = u * 4;
-      const y = (i % 5) * 0.18 - 0.36 - (pii && x > 0 ? x * x * 0.7 : 0);
-      gatePos.set([x, y, REGION_Z[0] - 1], i * 3);
-    }
-    if (gate.current) gate.current.geometry.attributes.position.needsUpdate = true;
-    // Memory: a question particle flies to its stored twin, which flashes violet.
-    const m = (t * 0.4) % 1;
-    memPos.set([-3.2 + m * 5.2, -0.6 + Math.sin(m * Math.PI) * 1.2, REGION_Z[1]], 0);
-    if (memory.current) memory.current.geometry.attributes.position.needsUpdate = true;
-    if (memoryHit.current) memoryHit.current.scale.setScalar(m > 0.92 ? 2.2 : 1);
-    // Hive: ten identical particles converge into one, then fan back out.
-    const h = (Math.sin(t * 1.1) + 1) / 2;
-    for (let i = 0; i < 10; i++) {
-      const a = (i / 10) * Math.PI * 2;
-      hivePos.set([Math.cos(a) * 2.6 * h, Math.sin(a) * 1.6 * h, REGION_Z[2]], i * 3);
-    }
-    if (hive.current) hive.current.geometry.attributes.position.needsUpdate = true;
-    // Reflexes: the top path goes dark every few seconds; traffic takes the lower path.
-    const broken = Math.floor(t / 2.5) % 2 === 1;
-    if (reflexA.current) (reflexA.current.material as THREE.LineBasicMaterial).color.set(broken ? "#ff6b7a" : "#74d7f7");
-    if (reflexA.current) (reflexA.current.material as THREE.LineBasicMaterial).opacity = broken ? 0.25 : 0.9;
-    if (reflexB.current) (reflexB.current.material as THREE.LineBasicMaterial).opacity = broken ? 0.9 : 0.25;
-    if (reflexDot.current) {
-      const s = (t * 0.8) % 1;
-      const y = broken ? -1.3 * Math.sin(s * Math.PI) + 0.6 * (1 - Math.sin(s * Math.PI)) : 1.4 * Math.sin(s * Math.PI) + 0.6 * (1 - Math.sin(s * Math.PI));
-      reflexDot.current.position.set(-3 + s * 6, y, REGION_Z[3]);
-    }
-    // Ledger: tokens rise into the ledger and settle.
-    for (let i = 0; i < 40; i++) {
-      const s = (t * 0.3 + i / 40) % 1;
-      ledgerPos.set([((i % 8) - 3.5) * 0.7, -2 + s * 4, REGION_Z[4] - (i % 3)], i * 3);
-    }
-    if (ledger.current) ledger.current.geometry.attributes.position.needsUpdate = true;
-  });
-
-  return (
-    <group>
-      <points ref={gate}>
-        <bufferGeometry>
-          <bufferAttribute attach="attributes-position" args={[gatePos, 3]} />
-          <bufferAttribute attach="attributes-color" args={[gateCol, 3]} />
+      <points>
+        <bufferGeometry ref={flashGeo}>
+          <bufferAttribute attach="attributes-position" args={[flashPos, 3]} />
+          <bufferAttribute attach="attributes-color" args={[flashCol, 3]} />
         </bufferGeometry>
-        <pointsMaterial map={dotTexture()} alphaTest={0.01} size={0.2} vertexColors transparent depthWrite={false} blending={THREE.AdditiveBlending} />
-      </points>
-      <mesh position={[0, 0, REGION_Z[0] - 1]}>
-        <planeGeometry args={[0.04, 2.4]} />
-        <meshBasicMaterial color="#74d7f7" transparent opacity={0.6} />
-      </mesh>
-      <points ref={memory}>
-        <bufferGeometry>
-          <bufferAttribute attach="attributes-position" args={[memPos, 3]} />
-        </bufferGeometry>
-        <pointsMaterial map={dotTexture()} alphaTest={0.01} size={0.42} color="#eaf0ff" transparent depthWrite={false} blending={THREE.AdditiveBlending} />
-      </points>
-      <mesh ref={memoryHit} position={[2, -0.6, REGION_Z[1]]}>
-        <sphereGeometry args={[0.18, 16, 16]} />
-        <meshBasicMaterial color="#c4a2f5" />
-      </mesh>
-      <points ref={hive}>
-        <bufferGeometry>
-          <bufferAttribute attach="attributes-position" args={[hivePos, 3]} />
-        </bufferGeometry>
-        <pointsMaterial map={dotTexture()} alphaTest={0.01} size={0.32} color="#79e8b3" transparent depthWrite={false} blending={THREE.AdditiveBlending} />
-      </points>
-      <primitive object={lineA} ref={reflexA} />
-      <primitive object={lineB} ref={reflexB} />
-      <mesh ref={reflexDot}>
-        <sphereGeometry args={[0.14, 12, 12]} />
-        <meshBasicMaterial color="#eaf0ff" />
-      </mesh>
-      <points ref={ledger}>
-        <bufferGeometry>
-          <bufferAttribute attach="attributes-position" args={[ledgerPos, 3]} />
-        </bufferGeometry>
-        <pointsMaterial map={dotTexture()} alphaTest={0.01} size={0.18} color="#b8ecff" transparent depthWrite={false} blending={THREE.AdditiveBlending} />
+        <pointsMaterial map={dotTexture()} alphaTest={0.01} size={1.3} vertexColors transparent depthWrite={false} blending={THREE.AdditiveBlending} />
       </points>
     </group>
   );
@@ -277,15 +261,17 @@ export default function Brain({ progress, active }: { progress: MotionValue<numb
     <Canvas
       dpr={[1, 1.5]}
       frameloop={active ? "always" : "never"}
-      camera={{ position: [0, 0, 4], fov: 62, near: 0.1, far: 120 }}
-      gl={{ antialias: false, alpha: true, powerPreference: "high-performance" }}
+      camera={{ position: [0, 0, 4], fov: 62, near: 0.1, far: 140 }}
+      gl={{ antialias: false, alpha: false, powerPreference: "high-performance" }}
       aria-hidden="true"
     >
-      <fog attach="fog" args={["#04050c", 6, 34]} />
-      <Network progress={progress} />
+      {/* Opaque deep space: faded dendrite tips must fade into black, not punch holes in the page. */}
+      <color attach="background" args={["#000000"]} />
+      <fog attach="fog" args={["#000000", 5, 30]} />
+      <Cortex progress={progress} />
       <EffectComposer multisampling={0}>
-        <Bloom intensity={1.35} luminanceThreshold={0.08} luminanceSmoothing={0.35} mipmapBlur radius={0.75} />
-        <Vignette eskil={false} offset={0.25} darkness={0.75} />
+        <Bloom intensity={1.6} luminanceThreshold={0.05} luminanceSmoothing={0.4} mipmapBlur radius={0.8} />
+        <Vignette eskil={false} offset={0.25} darkness={0.8} />
       </EffectComposer>
     </Canvas>
   );

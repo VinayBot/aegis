@@ -4,7 +4,7 @@ import { BlurWords } from "../components/fx";
 import { Controls, ReactFlow, ReactFlowProvider, useReactFlow, ViewportPortal, type Edge, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { AnimatePresence, motion } from "motion/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { groupOf, overviewGraph, positionNodes, type View } from "../components/arch/layout";
 import { JOURNEY, metaFor } from "../components/arch/meta";
@@ -18,7 +18,9 @@ import { EASE_UI, useReducedMotion } from "../lib/motion";
 import type { ArchEdge, ArchNode, Architecture as Arch, GatewayEvent, HealthComponent } from "../lib/types";
 
 const edgeTypes = { pulse: PulseEdge };
-type Tab = View | "trace";
+type Tab = View | "trace" | "galaxy";
+
+const Galaxy3D = lazy(() => import("../scenes/Galaxy3D"));
 
 function handlesFor(a: [number, number], b: [number, number]) {
   const dx = b[0] - a[0];
@@ -134,7 +136,7 @@ function Drawer({ node, onClose }: { node: ArchNode; onClose: () => void }) {
   const events = recent.filter((e) => e.stage === node.id || (node.id.startsWith("backend:") && e.backend === node.id.slice(8))).slice(-10).reverse();
   return (
     <motion.aside initial={{ x: 40, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 40, opacity: 0 }} transition={{ type: "spring", stiffness: 260, damping: 28 }}
-      className="glass glass-strong absolute bottom-3 right-3 top-3 z-20 w-[min(420px,calc(100%-24px))] overflow-y-auto p-6" aria-label={`${node.label} details`}>
+      className="glass glass-strong absolute bottom-3 right-3 top-3 z-20 w-[min(420px,calc(100%-24px))] overflow-y-auto overscroll-contain p-6" aria-label={`${node.label} details`}>
       <div className="flex items-start justify-between gap-4">
         <h2 className="font-display text-2xl font-semibold">{node.label}</h2>
         <button type="button" className="btn btn-quiet min-h-9 px-3" onClick={onClose} aria-label="Close details">Close</button>
@@ -525,7 +527,7 @@ function SendTest() {
   return (
     <form className="flex flex-1 flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); void send(); }}>
       <label htmlFor="test-prompt" className="sr-only">Test prompt</label>
-      <input id="test-prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)} className="glass min-h-11 min-w-0 flex-1 px-4 text-sm text-ink outline-none" />
+      <input id="test-prompt" name="test-prompt" autoComplete="off" value={prompt} onChange={(e) => setPrompt(e.target.value)} className="glass min-h-11 min-w-0 flex-1 px-4 text-sm text-ink" />
       <button type="submit" className="btn btn-primary" disabled={busy || mode !== "live"}>{busy ? "Sending…" : "Send test request"}</button>
       {result && <span className="text-sm text-ink-soft" role="status">{result}</span>}
     </form>
@@ -534,7 +536,8 @@ function SendTest() {
 
 export default function Architecture() {
   const [params, setParams] = useSearchParams();
-  const tab = (params.get("view") as Tab) ?? "detailed";
+  const raw = params.get("view");
+  const tab: Tab = raw === "detailed" || raw === "trace" || raw === "overview" ? "detailed" : "galaxy";
   const [follow, setFollow] = useState(false);
   const [selected, setSelected] = useState<ArchNode | null>(null);
   const [selfcheck, setSelfcheck] = useState<Record<string, number>>({});
@@ -543,6 +546,7 @@ export default function Architecture() {
   const driver = useRef<PacketDriver | null>(null);
   const arch = useLive((s) => s.architecture);
   const mode = useLive((s) => s.mode);
+  const reducedMotion = useReducedMotion();
 
   const setTab = (t: Tab) => setParams((p) => { p.set("view", t); return p; });
 
@@ -574,11 +578,11 @@ export default function Architecture() {
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <div role="tablist" aria-label="View" className="glass flex p-1">
-          {(["overview", "detailed", "trace"] as Tab[]).map((t) => (
+          {(["galaxy", "detailed"] as Tab[]).map((t) => (
             <button key={t} role="tab" aria-selected={tab === t} type="button" onClick={() => setTab(t)}
               className="min-h-9 rounded-[10px] px-4 text-sm capitalize transition-colors"
               style={tab === t ? { background: "var(--cyan)", color: "var(--space-0)", fontWeight: 600 } : { color: "var(--ink-soft)" }}>
-              {t === "trace" ? "Trace replay" : t}
+              {t === "galaxy" ? "3D galaxy" : "Detailed"}
             </button>
           ))}
         </div>
@@ -602,18 +606,27 @@ export default function Architecture() {
       <div className="mt-4"><Journey /></div>
       <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_300px]">
         <div className="glass graph-space relative h-[min(76vh,820px)] min-h-[560px] overflow-hidden">
-          <ReactFlowProvider>
-            <Graph tab={tab} follow={follow} setFollow={setFollow} onSelect={setSelected} selfcheck={selfcheck} driver={driver} />
-          </ReactFlowProvider>
+          {tab === "galaxy" ? (
+            arch ? (
+              <Suspense fallback={<p className="grid h-full place-items-center text-ink-mute">Loading the 3D galaxy…</p>}>
+                <Galaxy3D nodes={arch.nodes} still={reducedMotion} />
+                <p className="pointer-events-none absolute bottom-3 left-4 text-xs text-ink-mute">Drag to orbit · every comet is a real request · moons are the model backends</p>
+              </Suspense>
+            ) : (
+              <p className="grid h-full place-items-center text-ink-mute">Waiting for /api/architecture…</p>
+            )
+          ) : (
+            <ReactFlowProvider>
+              <Graph tab={tab} follow={follow} setFollow={setFollow} onSelect={setSelected} selfcheck={selfcheck} driver={driver} />
+            </ReactFlowProvider>
+          )}
           <AnimatePresence>{selected && <Drawer key={selected.id} node={selected} onClose={() => setSelected(null)} />}</AnimatePresence>
         </div>
         <div className="flex flex-col gap-4">
-          {(tab === "trace" || picked) && picked ? (
-            <TraceReplay requestId={picked} driver={driver} />
-          ) : tab === "trace" ? (
-            <p className="glass p-4 text-sm text-ink-soft">Pick a request below to replay its journey in slow motion, step by step.</p>
-          ) : null}
-          <LiveFeed picked={picked} onPick={(id) => { setPicked(id); setTab("trace"); }} />
+          {picked ? <TraceReplay requestId={picked} driver={driver} /> : (
+            <p className="glass p-4 text-sm text-ink-soft">Pick a request below to replay its journey in slow motion on the detailed map.</p>
+          )}
+          <LiveFeed picked={picked} onPick={(id) => { setPicked(id); setTab("detailed"); }} />
           <Legend />
           <Link to="/chaos" className="btn btn-quiet self-start">Break something in the Chaos Lab</Link>
         </div>

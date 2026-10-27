@@ -113,6 +113,8 @@ function connectSocket() {
       return;
     }
     emit(data as GatewayEvent);
+    // State changes should reach the map now, not at the next 1.5 s poll.
+    if (data.type === "health" || data.type === "breaker.state") void poll("architecture", "/api/architecture");
   };
   ws.onclose = () => {
     window.clearInterval(watchdog);

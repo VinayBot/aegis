@@ -70,7 +70,8 @@ export function BlurWords({ text, className = "", shimmer = false, delay = 0 }: 
   const reduced = useReducedMotion();
   const words = text.split(" ");
   return (
-    <span className={`${className} ${shimmer ? "text-shimmer" : ""}`} aria-label={text}>
+    <span className={`${className} ${shimmer ? "text-shimmer" : ""}`}>
+      <span className="sr-only">{text}</span>
       {words.map((w, i) => (
         <motion.span key={i} aria-hidden="true" className="inline-block whitespace-pre"
           initial={reduced ? false : { opacity: 0, y: "0.45em", filter: "blur(12px)" }}

@@ -9,7 +9,7 @@ import { backendLabel, fmtMs, fmtUsd } from "../lib/format";
 import { useLive } from "../lib/live";
 import { SPRING, useReducedMotion } from "../lib/motion";
 import { useUi } from "../lib/ui";
-import FlyingBot from "./FlyingBot";
+import AssistantBot from "./AssistantBot";
 import RobotFace, { type Mood } from "./RobotFace";
 
 interface Source { n: number | string; source: string; heading: string; score: number | null }
@@ -73,7 +73,7 @@ function Chip({ m }: { m: Message }) {
       <span>{Number(s.tokens_in) + Number(s.tokens_out)} tokens</span>
       <span>{fmtMs(Number(s.latency_ms))}</span>
       <span>est. saved {fmtUsd(Number(s.saved_est_usd))}</span>
-      <Link to={`/architecture?view=trace&request=${String(s.request_id)}`} className="text-cyan underline underline-offset-2">watch this answer's journey</Link>
+      <Link to={`/architecture?view=detailed&request=${String(s.request_id)}`} className="text-cyan underline underline-offset-2">watch this answer's journey</Link>
     </div>
   );
 }
@@ -153,7 +153,7 @@ export default function Assistant() {
 
   return (
     <>
-    <FlyingBot open={open} onOpen={() => openAssistant()} />
+    <AssistantBot open={open} onOpen={(q) => openAssistant(q)} />
     <div className="fixed bottom-5 right-5 z-50">
       <AnimatePresence>
         {open && (
@@ -175,7 +175,7 @@ export default function Assistant() {
               </div>
               <button type="button" onClick={close} className="btn btn-quiet min-h-9 px-3 text-sm" aria-label="Close assistant">Close</button>
             </header>
-            <div ref={listRef} className="flex-1 space-y-4 overflow-y-auto px-4 py-4" aria-live="polite">
+            <div ref={listRef} className="flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4" aria-live="polite">
               {messages.length === 0 && (
                 <div>
                   <p className="text-sm text-ink-soft">Ask how any part of the gateway works, or what it is doing right now.</p>
@@ -207,10 +207,10 @@ export default function Assistant() {
             </div>
             <form className="flex items-end gap-2 p-3" style={{ background: "var(--space-1)" }} onSubmit={(e) => { e.preventDefault(); void send(input); }}>
               <label htmlFor="aegis-input" className="sr-only">Ask AEGIS</label>
-              <textarea id="aegis-input" ref={inputRef} value={input} rows={1} placeholder="Ask about the gateway…"
+              <textarea id="aegis-input" name="question" autoComplete="off" ref={inputRef} value={input} rows={1} placeholder="Ask about the gateway…"
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(input); } }}
-                className="max-h-28 min-h-11 flex-1 resize-none rounded-[var(--radius-sm)] px-3 py-2.5 text-[0.92rem] text-ink outline-none placeholder:text-ink-faint" style={{ background: "var(--space-0)" }} />
+                className="max-h-28 min-h-11 flex-1 resize-none rounded-[var(--radius-sm)] px-3 py-2.5 text-[0.92rem] text-ink placeholder:text-ink-mute" style={{ background: "var(--space-0)" }} />
               <button type="submit" className="btn btn-primary" disabled={!input.trim() || mode !== "live" || state === "thinking" || state === "streaming"}>Ask</button>
             </form>
           </motion.section>

@@ -1,0 +1,10 @@
+import { chromium } from "@playwright/test";
+const b = await chromium.launch({ headless: false, args: ["--use-angle=metal"] });
+const p = await b.newPage({ viewport: { width: 1440, height: 900 } });
+await p.goto("http://127.0.0.1:5173/", { waitUntil: "networkidle" });
+const top = await p.evaluate(() => document.querySelector('section[aria-labelledby="tunnel-title"]').offsetTop);
+const H = await p.evaluate(() => document.querySelector('section[aria-labelledby="tunnel-title"]').offsetHeight - innerHeight);
+await p.evaluate((y) => scrollTo(0, y), Math.round(top + H * 0.45));
+await p.waitForTimeout(2000);
+await p.screenshot({ path: "../var/shots/tunnel.png" });
+await b.close();

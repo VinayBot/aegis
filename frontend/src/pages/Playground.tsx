@@ -83,7 +83,7 @@ function MiniTrace({ run }: { run: Run }) {
       </ol>
       {s?.request_id && (
         <p className="mt-3 flex flex-wrap gap-3 text-sm">
-          <Link className="text-cyan underline underline-offset-2" to={`/architecture?view=trace&request=${s.request_id}`}>Watch this request's journey</Link>
+          <Link className="text-cyan underline underline-offset-2" to={`/architecture?view=detailed&request=${s.request_id}`}>Watch this request's journey</Link>
           <a className="text-cyan underline underline-offset-2" href={`http://127.0.0.1:16686/trace/${s.trace_id}`} target="_blank" rel="noreferrer">Open in Jaeger</a>
         </p>
       )}
@@ -150,7 +150,7 @@ export default function Playground() {
         <form className="glass flex flex-col gap-4 p-5" onSubmit={(e) => { e.preventDefault(); void send(); }}>
           <label className="block text-sm text-ink-soft">
             Prompt
-            <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={5} className="mt-1.5 w-full rounded-[var(--radius-sm)] p-3 text-[0.95rem] text-ink outline-none" style={{ background: "var(--space-1)" }} />
+            <textarea name="prompt" autoComplete="off" value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={5} className="mt-1.5 w-full rounded-[var(--radius-sm)] p-3 text-[0.95rem] text-ink" style={{ background: "var(--space-1)" }} />
           </label>
           <div className="grid grid-cols-2 gap-3">
             <label className="block text-sm text-ink-soft">
