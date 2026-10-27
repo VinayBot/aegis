@@ -1,16 +1,21 @@
-// ECharts, tree-shaken to the pieces used here, themed from the CSS tokens. Every chart ships a
+// ECharts (loaded on mount from ./chartEngine), themed from the CSS tokens. Every chart ships a
 // table fallback ("Show as table") so the data is readable without the canvas.
-import { BarChart, LineChart } from "echarts/charts";
-import { GridComponent, LegendComponent, MarkLineComponent, TooltipComponent } from "echarts/components";
-import * as echarts from "echarts/core";
-import { CanvasRenderer } from "echarts/renderers";
+import type { ECharts } from "echarts/core";
 import { useEffect, useRef, useState } from "react";
 import { useReducedMotion } from "../lib/motion";
 
-echarts.use([LineChart, BarChart, GridComponent, TooltipComponent, LegendComponent, MarkLineComponent, CanvasRenderer]);
+type Engine = typeof import("./chartEngine")["echarts"];
 
+// Tokens never change at runtime; reading computed style forces a style recalculation, and the
+// charts read a dozen tokens on every update, so each is read once.
+const tokens = new Map<string, string>();
 export function token(name: string): string {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  let v = tokens.get(name);
+  if (v === undefined) {
+    v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    tokens.set(name, v);
+  }
+  return v;
 }
 
 export interface Series {
@@ -43,12 +48,19 @@ export default function Chart({
   yMax?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const chart = useRef<echarts.ECharts | null>(null);
+  const chart = useRef<ECharts | null>(null);
   const reduced = useReducedMotion();
   const [table, setTable] = useState(false);
+  const [echarts, setEcharts] = useState<Engine | null>(null);
 
   useEffect(() => {
-    if (!ref.current) return;
+    let alive = true;
+    void import("./chartEngine").then((m) => alive && setEcharts(() => m.echarts));
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!ref.current || !echarts) return;
     chart.current = echarts.init(ref.current, undefined, { renderer: "canvas" });
     const ro = new ResizeObserver(() => chart.current?.resize());
     ro.observe(ref.current);
@@ -57,10 +69,10 @@ export default function Chart({
       chart.current?.dispose();
       chart.current = null;
     };
-  }, []);
+  }, [echarts]);
 
   useEffect(() => {
-    if (!chart.current) return;
+    if (!chart.current || !echarts) return;
     const ink = token("--ink-mute");
     const line = token("--line");
     const labels = t.map((ts) => new Date(ts * 1000).toLocaleTimeString("en-GB", { hour12: false, minute: "2-digit", second: "2-digit" }));
@@ -106,7 +118,7 @@ export default function Chart({
       },
       { notMerge: true },
     );
-  }, [t, series, reduced, format, markLine, yMax]);
+  }, [echarts, t, series, reduced, format, markLine, yMax]);
 
   const hasData = series.some((s) => s.data.some((v) => v !== null && v !== 0));
   return (

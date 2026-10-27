@@ -65,18 +65,33 @@ export function Reveal({ children, className = "", stagger = 0.08, as = "div", d
   );
 }
 
-/** Headline that rises word by word out of a blur, with a slow shimmer across it afterwards. */
-export function BlurWords({ text, className = "", shimmer = false, delay = 0 }: { text: string; className?: string; shimmer?: boolean; delay?: number }) {
+const SHOWN = { opacity: 1, y: 0, filter: "blur(0px)" };
+
+/** Headline that rises word by word out of a blur, with a slow shimmer across it afterwards. Page
+ *  titles play at once; `onScroll` waits until the headline scrolls into view. */
+export function BlurWords({ text, className = "", shimmer = false, delay = 0, onScroll = false }: { text: string; className?: string; shimmer?: boolean; delay?: number; onScroll?: boolean }) {
   const reduced = useReducedMotion();
   const words = text.split(" ");
+  const reveal = onScroll ? { whileInView: SHOWN, viewport: { once: true } } : { animate: SHOWN };
+  if (shimmer) {
+    // background-clip: text cannot paint words that are mid-transform, so a shimmered title rises
+    // as one piece; otherwise it stays invisible until every word has landed.
+    return (
+      <motion.span className={`${className} text-shimmer inline-block`}
+        initial={reduced ? false : { opacity: onScroll ? 0 : 0.25, y: "0.15em", filter: "blur(4px)" }} {...reveal}
+        transition={{ duration: 0.35, ease: EASE_UI, delay }}>
+        {text}
+      </motion.span>
+    );
+  }
   return (
-    <span className={`${className} ${shimmer ? "text-shimmer" : ""}`}>
+    <span className={className}>
       <span className="sr-only">{text}</span>
       {words.map((w, i) => (
         <motion.span key={i} aria-hidden="true" className="inline-block whitespace-pre"
-          initial={reduced ? false : { opacity: 0, y: "0.45em", filter: "blur(12px)" }}
-          whileInView={{ opacity: 1, y: 0, filter: "blur(0px)" }} viewport={{ once: true }}
-          transition={{ duration: 0.8, ease: EASE_UI, delay: delay + i * 0.07 }}>
+          initial={reduced ? false : { opacity: onScroll ? 0 : 0.25, y: "0.2em", filter: "blur(4px)" }}
+          {...reveal}
+          transition={{ duration: 0.35, ease: EASE_UI, delay: delay + i * 0.035 }}>
           {w}{i < words.length - 1 ? " " : ""}
         </motion.span>
       ))}
@@ -137,6 +152,6 @@ export function Warp({ trigger }: { trigger: string }) {
   const reduced = useReducedMotion();
   if (reduced) return null;
   return (
-    <motion.div key={trigger} aria-hidden="true" className="warp" initial={{ opacity: 0.9, scale: 0.6 }} animate={{ opacity: 0, scale: 1.6 }} transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }} />
+    <motion.div key={trigger} aria-hidden="true" className="warp" initial={{ opacity: 0.9, scale: 0.6 }} animate={{ opacity: 0, scale: 1.6 }} transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }} />
   );
 }

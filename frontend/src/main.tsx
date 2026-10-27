@@ -10,13 +10,26 @@ import Shell from "./components/Shell";
 import Home from "./pages/Home";
 import NotFound from "./pages/NotFound";
 import { startLive } from "./lib/live";
+import { onFirstInteraction } from "./lib/motion";
 
-const Architecture = lazy(() => import("./pages/Architecture"));
-const ControlRoom = lazy(() => import("./pages/ControlRoom"));
-const ChaosLab = lazy(() => import("./pages/ChaosLab"));
-const Playground = lazy(() => import("./pages/Playground"));
-const Traces = lazy(() => import("./pages/Traces"));
-const Docs = lazy(() => import("./pages/Docs"));
+const PAGES = {
+  architecture: () => import("./pages/Architecture"),
+  controlRoom: () => import("./pages/ControlRoom"),
+  chaos: () => import("./pages/ChaosLab"),
+  playground: () => import("./pages/Playground"),
+  traces: () => import("./pages/Traces"),
+  docs: () => import("./pages/Docs"),
+};
+const Architecture = lazy(PAGES.architecture);
+const ControlRoom = lazy(PAGES.controlRoom);
+const ChaosLab = lazy(PAGES.chaos);
+const Playground = lazy(PAGES.playground);
+const Traces = lazy(PAGES.traces);
+const Docs = lazy(PAGES.docs);
+
+// Pages stay split out of the first load, then are fetched on the visitor's first interaction, so
+// switching tabs never waits on a download and the first paint never waits on them.
+onFirstInteraction(() => Object.values(PAGES).forEach((load) => void load()), 8000);
 
 startLive();
 

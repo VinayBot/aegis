@@ -52,7 +52,7 @@ function ProofStrip() {
   return (
     <section aria-labelledby="proof-title" className="mx-auto max-w-[1440px] px-[var(--gutter)] py-28">
       <h2 id="proof-title" className="font-display text-4xl font-semibold tracking-tight md:text-6xl">
-        <BlurWords text={mode === "replay" ? "What the gateway recorded" : "What the gateway has done so far"} />
+        <BlurWords onScroll text={mode === "replay" ? "What the gateway recorded" : "What the gateway has done so far"} />
       </h2>
       <div className="mt-12 grid gap-x-10 gap-y-12 sm:grid-cols-2 lg:grid-cols-4">
         {items.map((it) => (
@@ -76,7 +76,7 @@ function MeetAegis() {
         <MeetStage />
       </div>
       <div>
-        <h2 id="meet-title" className="font-display text-4xl font-semibold tracking-tight md:text-6xl"><BlurWords text="Meet AEGIS. Ask it anything." shimmer /></h2>
+        <h2 id="meet-title" className="font-display text-4xl font-semibold tracking-tight md:text-6xl"><BlurWords onScroll text="Meet AEGIS. Ask it anything." shimmer /></h2>
         <p className="mt-6 max-w-[42ch] text-lg leading-relaxed text-ink-soft">
           The assistant answers from this project's own docs and its live state, and every answer is a real request through the gateway, with its trace attached.
         </p>

@@ -72,3 +72,27 @@ export function useOnScreen<T extends Element>(ref: React.RefObject<T | null>): 
   }, [ref]);
   return on;
 }
+
+/** Runs `fn` once, on the visitor's first interaction (pointer, touch, scroll or key) or after
+ *  `fallbackMs`, whichever comes first. Used for work the first screen does not need, so it never
+ *  competes with the first paint. Returns a cancel function. */
+export function onFirstInteraction(fn: () => void, fallbackMs: number): () => void {
+  const events = ["pointermove", "pointerdown", "touchstart", "scroll", "keydown", "wheel"] as const;
+  let done = false;
+  const run = () => {
+    if (done) return;
+    done = true;
+    cancel();
+    fn();
+  };
+  const timer = window.setTimeout(run, fallbackMs);
+  const cancel = () => {
+    window.clearTimeout(timer);
+    events.forEach((e) => window.removeEventListener(e, run));
+  };
+  events.forEach((e) => window.addEventListener(e, run, { once: true, passive: true }));
+  return () => {
+    done = true;
+    cancel();
+  };
+}

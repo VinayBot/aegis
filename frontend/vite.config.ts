@@ -18,16 +18,10 @@ export default defineConfig({
   },
   build: {
     target: "es2022",
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (id.includes("three") || id.includes("@react-three")) return "three";
-          if (id.includes("echarts") || id.includes("zrender")) return "charts";
-          if (id.includes("@xyflow")) return "flow";
-          if (id.includes("react-markdown") || id.includes("remark") || id.includes("micromark") || id.includes("mdast")) return "markdown";
-        },
-      },
-    },
+    // No manual chunks: three.js, ECharts, React Flow and the markdown renderer are each behind a
+    // lazy import already, so the automatic split keeps them off the first page. (Manual chunk rules
+    // swept shared helpers into the three.js and React Flow chunks, which Home then had to preload.)
+    chunkSizeWarningLimit: 900,
   },
   test: {
     environment: "jsdom",

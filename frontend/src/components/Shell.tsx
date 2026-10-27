@@ -1,8 +1,8 @@
-import { AnimatePresence, motion } from "motion/react";
+import { motion } from "motion/react";
 import { Suspense, lazy } from "react";
 import { useSystemMood } from "./HoverRobot";
 import { CursorGlow, EventTicker, SpotlightProvider, Warp } from "./fx";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { NavLink, Outlet, ScrollRestoration, useLocation } from "react-router-dom";
 import { useLive } from "../lib/live";
 import { EASE_UI, useMotionPause, useReducedMotion } from "../lib/motion";
 
@@ -111,21 +111,22 @@ export default function Shell() {
         <EventTicker />
       </header>
       <Warp trigger={location.pathname} />
-      <AnimatePresence mode="wait">
+      <ScrollRestoration />
+      {/* The new page replaces the old one at once (no exit to wait for) and settles in 180 ms. */}
+      {/* The boundary sits outside the keyed page: a tab switch keeps the current page on screen
+          until the next one is ready, instead of flashing an empty placeholder. */}
+      <Suspense fallback={<div className="min-h-[60vh]" aria-busy="true" />}>
         <motion.main
           id="main"
           key={location.pathname}
-          initial={reduced ? false : { opacity: 0, y: 14 }}
+          initial={reduced ? false : { opacity: 0.4, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={reduced ? undefined : { opacity: 0, y: -8 }}
-          transition={{ duration: 0.32, ease: EASE_UI }}
-          className="origin-top pb-32 sm:pb-0" // on phones, room to scroll the last controls clear of the docked robot
+          transition={{ duration: 0.18, ease: EASE_UI }}
+          className="origin-top pb-32 lg:pb-0" // below laptop width, room to scroll the last controls clear of the docked robot
         >
-          <Suspense fallback={<div className="min-h-[60vh]" aria-busy="true" />}>
-            <Outlet />
-          </Suspense>
+          <Outlet />
         </motion.main>
-      </AnimatePresence>
+      </Suspense>
       <Suspense fallback={null}>
         <Assistant />
       </Suspense>

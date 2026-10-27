@@ -4,11 +4,11 @@
 //   hover:  it perks up: eyes widen, head turns to you, a little wiggle
 //   click:  it wakes (eyes flash, thrusters burst, a hop) and the chat opens
 // Clicking a suggestion in the bubble asks AEGIS that question for real. With reduced motion it
-// stays still and opens on click. On phones it is smaller and the bubble is hidden, so it never
+// stays still and opens on click. Below laptop width it is smaller and the bubble is hidden, so it never
 // sits over content.
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
-import { useReducedMotion } from "../lib/motion";
+import { onFirstInteraction, useReducedMotion } from "../lib/motion";
 
 const Robot3D = lazy(() => import("../scenes/Robot3D"));
 
@@ -34,16 +34,8 @@ export default function AssistantBot({ open, onOpen }: { open: boolean; onOpen: 
   const pointer = useRef<[number, number]>([0, 0]);
   const self = useRef<HTMLDivElement>(null);
 
-  // The 3D robot (three.js) loads once the page has settled, never during the first paint.
-  useEffect(() => {
-    const go = () => setMount(true);
-    if (document.readyState === "complete") {
-      const t = window.setTimeout(go, 500);
-      return () => window.clearTimeout(t);
-    }
-    window.addEventListener("load", go, { once: true });
-    return () => window.removeEventListener("load", go);
-  }, []);
+  // The 3D robot (three.js) loads on the first interaction, or after 6 s, never during the first paint.
+  useEffect(() => onFirstInteraction(() => setMount(true), 6000), []);
 
   // Its head follows the pointer.
   useEffect(() => {
@@ -80,14 +72,14 @@ export default function AssistantBot({ open, onOpen }: { open: boolean; onOpen: 
   const question = !hover && prompt > 0 ? PROMPTS[prompt] : undefined;
 
   return (
-    <div ref={self} className="fixed bottom-3 right-3 z-50 flex origin-bottom-right scale-75 flex-col items-end sm:scale-100">
+    <div ref={self} className="fixed bottom-3 right-3 z-50 flex origin-bottom-right scale-75 flex-col items-end lg:scale-100">
       <AnimatePresence mode="wait">
         {(ready || reduced) && (
           <motion.button key={text} type="button" onClick={() => void wake(question)}
             initial={reduced ? false : { opacity: 0, y: 6, scale: 0.92, filter: "blur(4px)" }}
             animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }} exit={{ opacity: 0, y: -4, scale: 0.96, filter: "blur(4px)" }}
             transition={{ type: "spring", stiffness: 320, damping: 26 }}
-            className="bot-bubble glass glass-strong glow-border is-live mr-2 hidden max-w-[240px] sm:block px-3.5 py-2 text-left text-[0.85rem] font-semibold text-ink"
+            className="bot-bubble glass glass-strong glow-border is-live mr-2 hidden max-w-[240px] lg:block px-3.5 py-2 text-left text-[0.85rem] font-semibold text-ink"
             tabIndex={-1} aria-hidden="true">
             {text}
           </motion.button>
