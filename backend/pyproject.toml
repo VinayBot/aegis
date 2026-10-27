@@ -1,0 +1,77 @@
+[project]
+name = "aegis"
+version = "1.0.0"
+description = "AEGIS: an AI gateway with semantic caching, failover, hedging and live observability"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+  "httpx>=0.28",
+  "redis>=5.2",
+  "pyyaml>=6.0",
+  "pydantic>=2.9",
+  "pydantic-settings>=2.6",
+  "numpy>=2.1",
+  "fastembed>=0.5",
+  "opentelemetry-api>=1.28",
+  "opentelemetry-sdk>=1.28",
+  "opentelemetry-exporter-otlp-proto-http>=1.28",
+  "presidio-analyzer>=2.2.355",
+  "presidio-anonymizer>=2.2.355",
+  "spacy>=3.8,<3.9",
+  "psutil>=6.1",
+  # Presidio NER model (12 MB), pinned to the official release wheel.
+  "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+]
+
+[project.optional-dependencies]
+# One optional backend adapter, so LiteLLM is demonstrated without owning the failover path.
+litellm = ["litellm==1.80.0"]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "ruff>=0.8",
+  "mypy>=1.13",
+  "types-pyyaml",
+  "types-psutil",
+  "websockets>=13",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["aegis"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003", "B008", "E501", "ASYNC109"]
+
+[tool.ruff.lint.per-file-ignores]
+# Integration tests launch and poll real processes on purpose.
+"tests/*" = ["ASYNC110", "ASYNC220", "ASYNC221", "ASYNC251"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+packages = ["aegis"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["live: needs the real model servers (make dev running)"]

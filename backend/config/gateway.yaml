@@ -1,0 +1,85 @@
+# AEGIS gateway configuration. Hot-reloaded when this file changes (no restart).
+#
+# Clients send a public model name (`models:`). Each model maps to an ordered chain of backends;
+# the router tries them in this order. Any OpenAI-compatible server is one `backends:` entry, so
+# pointing at vLLM on a GPU box later is one block (see `vllm-gpu` below).
+
+backends:
+  mlx-qwen:
+    kind: openai                     # any OpenAI-compatible /v1 server
+    label: MLX primary
+    base_url: http://127.0.0.1:8081/v1
+    model: mlx-community/Qwen2.5-3B-Instruct-4bit
+    slots: 1                         # mlx_lm.server generates one request at a time
+    process: mlx                     # var/run/mlx.pid: lets the chaos lab SIGSTOP the real process
+    provider: mlx
+    # The provider's real defaults. They become part of the cache key when a client omits them.
+    defaults: {temperature: 0.0, top_p: 1.0, max_tokens: 512}
+
+  ollama-llama:
+    kind: openai
+    label: Ollama fallback
+    base_url: http://127.0.0.1:11434/v1
+    model: llama3.2:3b
+    slots: 2
+    provider: ollama
+    defaults: {temperature: 0.8, top_p: 0.9, max_tokens: 512}
+
+  litellm-ollama:
+    kind: litellm                    # optional adapter: `uv sync --extra litellm`
+    label: LiteLLM adapter
+    model: ollama_chat/llama3.2:3b
+    api_base: http://127.0.0.1:11434
+    slots: 1
+    provider: litellm
+    defaults: {temperature: 0.8, top_p: 0.9, max_tokens: 512}
+
+  # vllm-gpu:                        # adding vLLM is this one entry
+  #   kind: openai
+  #   label: vLLM GPU
+  #   base_url: http://gpu-box:8000/v1
+  #   model: Qwen/Qwen2.5-7B-Instruct
+  #   slots: 16
+  #   provider: vllm
+  #   defaults: {temperature: 0.7, top_p: 1.0, max_tokens: 512}
+
+models:
+  aegis-chat:
+    chain: [mlx-qwen, ollama-llama]
+    # "est. cloud equivalent": what the same tokens would cost on a hosted model. Local inference
+    # has no bill; this is the counterfactual used for savings. Reference: gpt-4o-mini list price.
+    price: {input_per_1m: 0.15, output_per_1m: 0.60, reference: gpt-4o-mini list price}
+  aegis-fallback:
+    chain: [ollama-llama]
+    price: {input_per_1m: 0.15, output_per_1m: 0.60, reference: gpt-4o-mini list price}
+  aegis-litellm:
+    chain: [litellm-ollama, ollama-llama]
+    price: {input_per_1m: 0.15, output_per_1m: 0.60, reference: gpt-4o-mini list price}
+
+keys:
+  aegis-demo-key:      {tenant: demo,        tpm: 30000, budget: {soft: 0.50, hard: 1.00}}
+  aegis-assistant-key: {tenant: aegis-bot,   tpm: 60000, budget: {soft: 0.50, hard: 1.00}}
+  aegis-flood-key:     {tenant: flood-test,  tpm: 1500,  budget: {soft: 0.50, hard: 1.00}}
+  aegis-budget-key:    {tenant: budget-test, tpm: 30000, budget: {soft: 0.0002, hard: 0.0006}}
+  veritas-key:         {tenant: veritas,     tpm: 30000, budget: {soft: 2.00, hard: 5.00}}
+  nexus-key:           {tenant: nexus,       tpm: 30000, budget: {soft: 2.00, hard: 5.00}}
+
+cache:
+  ttl_seconds: 86400
+  semantic_threshold: 0.95           # cosine similarity; a starting guess, tune on near-misses
+  semantic_max_tokens: 200           # longer last messages (RAG prompts) get exact-match only
+  embed_budget_ms: 300               # embedder slower than this: skip the semantic lookup
+
+router:
+  slot_wait_seconds: 2               # wait this long for a free slot, then try the next backend
+  queue_deadline_seconds: 10         # nothing free in this long: 503 + Retry-After
+  first_token_timeout_seconds: 15    # plus 1 s per 1k prompt tokens
+  hedge_min_ms: 250                  # never hedge sooner than this
+  hedge_default_ms: 2500             # hedge delay before a backend has enough TTFT samples
+
+breaker:
+  error_threshold: 3                 # consecutive errors that open the breaker
+  open_seconds: 30
+
+chaos:
+  auto_revert_seconds: 120
