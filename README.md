@@ -95,6 +95,7 @@ chip underneath.
 
 ## Documents
 
+- [LEARNING.md](LEARNING.md): a guided, beginner-friendly tour of the whole project (start here)
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): components, data flow, failure behaviour
 - [docs/DECISIONS.md](docs/DECISIONS.md): why each choice was made, and what was rejected
 - [docs/API.md](docs/API.md): every endpoint
