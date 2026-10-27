@@ -20,7 +20,7 @@ make dev     # Redis + Jaeger (Colima), mlx_lm.server, Ollama, gateway :8000, si
 | What | Where |
 | --- | --- |
 | Website | http://127.0.0.1:5173 |
-| Gateway API (OpenAPI) | http://127.0.0.1:8000/docs |
+| Gateway API (OpenAPI) | http://127.0.0.1:8000/api/swagger |
 | Traces (Jaeger) | http://127.0.0.1:16686 |
 
 Send a request like any OpenAI client:
@@ -32,7 +32,7 @@ curl -N http://127.0.0.1:8000/v1/chat/completions \
 ```
 
 Other targets: `make test` (backend + frontend tests, needs `make infra`), `make e2e` (browser tests
-against `make dev`), `make lint`, `make typecheck`, `make record-fixture`, `make memory`, `make perf`.
+against `make dev`), `make lint`, `make typecheck`, `make record-fixture`, `make memory`, `make perf`, `make sweep` (every page at desktop and phone width).
 
 ## The request path
 

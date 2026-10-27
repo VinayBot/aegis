@@ -12,13 +12,15 @@ MLX Qwen2.5-3B-4bit as primary, Ollama llama3.2:3b as fallback. Nothing below is
 
 | Suite | Command | Result |
 | --- | --- | --- |
-| Backend unit + HTTP integration + SIGSTOP | `make test-backend` | **55 passed** (39 s) |
-| Lint | `uv run ruff check .` | **pass** (all checks passed) |
+| Backend unit + HTTP integration + SIGSTOP | `make test-backend` | **61 passed** (43 s) |
+| Lint and format (backend) | `uv run ruff check .`, `ruff format --check .` | **pass** |
 | Types (backend) | `uv run mypy aegis` | **pass** (no issues in 34 files) |
 | Types (frontend) | `npx tsc -b` | **pass** |
 | Lint (frontend, bans `Math.random`) | `npx eslint src` | **pass** |
 | Frontend unit | `npm test` (vitest) | **7 passed**, including the `Math.random` guard |
-| End-to-end, real system | `make e2e` (Playwright) | **6 passed** |
+| End-to-end, real system, dev server | `make e2e` (Playwright) | **14 passed**, twice in a row |
+| End-to-end, production build served by the gateway | `AEGIS_SITE_URL=http://127.0.0.1:8000 npm run e2e` | **14 passed** |
+| Page sweep, desktop and phone width, dev and production | `make sweep` | **20 of 20 clean** |
 
 The e2e suite covers:
 - the Home scroll journey through all five regions;
@@ -26,7 +28,26 @@ The e2e suite covers:
 - the 3D galaxy, with comets following real requests;
 - killing the primary turns its breaker red within 2 s;
 - an assistant answer with a citation and a trace chip;
-- the offline switch to labelled replay.
+- the offline switch to labelled replay;
+- the Playground: a streamed answer with its trace, then an exact cache hit on resend;
+- the Playground: ten identical requests make one upstream call (nine coalesced);
+- the Chaos Lab kill switch: the primary freezes, traffic is answered by the fallback, revert restores it;
+- Traces: picking a trace shows its waterfall and its Jaeger link;
+- Architecture: clicking a node opens its details, and so does tapping one on a phone;
+- Docs: links between documents open inside the site;
+- a 404 page with a way back, and the Pause motion control.
+
+The page sweep (`make sweep`) loads all 10 routes at 1440 px and 390 px. On each load it checks for:
+- console errors and warnings;
+- failed or 4xx/5xx requests;
+- horizontal overflow;
+- exactly one `h1`;
+- images without `alt`;
+- buttons or links without a name.
+
+All 20 loads are clean. Two further checks also passed:
+- **Offline replay:** every page with the API and WebSocket blocked shows the replay banner and has no errors.
+- **Docs:** all 9 documents load, and all 15 links between them resolve.
 
 ## Gateway criteria
 
@@ -61,7 +82,7 @@ The e2e suite covers:
 | No `Math.random` in data paths | **pass**: an ESLint ban plus a unit test; decoration uses a seeded mulberry32 |
 | Replay banner when the backend is offline | **pass** (e2e); the fixture is 686 real recorded events |
 | All pages: Home, Architecture, Control Room, Chaos Lab, Playground, Traces, Docs | **pass** |
-| Assistant: grounded, routed through the gateway, trace chip, citations | **pass** (e2e). Caveat: a 3B model sometimes paraphrases numbers; the prompt instructs it to copy numbers exactly, which reduced but did not eliminate this |
+| Assistant: grounded, routed through the gateway, trace chip, citations | **pass** (e2e, plus 12 hand-checked questions below) |
 | Reduced motion and the "Pause motion" control | **pass**: every effect has a still form; the 3D scenes switch to on-demand rendering |
 | Accessibility (Lighthouse) | **100** on Home, Architecture and Control Room, desktop and mobile |
 
@@ -106,6 +127,38 @@ traffic (bloom post-processing plus dozens of animated packets).
 show. The Colima VM also reserves 2 GiB. The realistic footprint is about 6 GB, which is well inside
 16 GB with one answer model per backend.
 
+## Every chaos scenario, run alone against the real models
+
+| Scenario | Narrated result |
+| --- | --- |
+| Primary crashes | 3/3 answered while MLX was frozen; breaker open; next request straight to Ollama; probe closed the breaker |
+| Traffic burst | 12 requests: 6 on MLX, 6 on Ollama, all 200 |
+| Slow primary | p95 TTFT 461 ms, 4 s latency injected: hedged, first token from Ollama |
+| Duplicate storm | 10 answers, 1 upstream call, 9 coalesced |
+| Rate-limit flood | 4 allowed, 4 × 429 with Retry-After 3 s |
+| PII in prompt | email, phone and name redacted before any model; counts only in the trace |
+
+## Assistant accuracy (12 questions, checked against `config/gateway.yaml` and the docs)
+
+These questions were answered correctly after the fixes below:
+- how long a breaker stays open (30 s);
+- how many errors open it (3);
+- when hedging fires;
+- the semantic threshold (0.95);
+- the slot wait (2 s);
+- what happens when Redis is down;
+- what happens when a backend dies mid-stream;
+- the first-token timeout;
+- why busy is not broken;
+- whether the primary is healthy right now;
+- which backend is the fallback;
+- the live cache hit rate (verified against `/api/metrics`).
+
+An off-topic question ("the capital of France") got the fixed refusal.
+
+Caveat: this is a 3B model, so an unusual phrasing can still produce a wrong number. Its context now
+states the key settings as plain sentences, which removed every error seen in this set.
+
 ## Bugs found by the validation itself
 
 - redis-py 8 returns FT.SEARCH replies as dicts, so every semantic lookup missed. Fixed with
@@ -116,6 +169,31 @@ show. The Colima VM also reserves 2 GiB. The realistic footprint is about 6 GB, 
   events now trigger an immediate refresh.
 - Galaxy labels: drei `Html` lost the first label's React root. Replaced with one DOM layer pinned
   every frame.
+
+Found by the deep-testing pass:
+- **Duplicate storm said "10 upstream, 0 coalesced".** Each storm's prompt was nearly identical to
+  the previous one, so the semantic cache answered it, and the narration miscounted those cache
+  hits as upstream calls. The built-in storm now bypasses the cache (the coalescer runs after it)
+  and the narration counts each outcome separately. A regression test runs the storm twice.
+- **The Playground's "Send this 10× at once" coalesced only 8.** A browser opens at most six
+  streams per host, so the last four queued behind the first answer. The ten requests are now
+  fired from the gateway with the Playground's own settings.
+- **Clicking or tapping a node on the detailed map often did nothing.** The hover highlight
+  re-rendered the node between press and release, so the click went to the background. The press
+  target is now honoured. Every phone tap hit this; two e2e tests cover it.
+- **`/docs` on the production build showed FastAPI's Swagger page.** The site and Swagger shared
+  the path; Swagger moved to `/api/swagger`.
+- **The PII guardrail redacted "Redis", "Ollama" and "Qwen" as people.** Questions about the
+  stack reached the model as `<PERSON>`. Stack names are now excluded, but a real name next to
+  one is still redacted (unit tests for both).
+- **The assistant said a breaker "stays open for 3 consecutive errors".** The 3B model misread a
+  docs table. Key settings and failure behaviours are now given to it as plain sentences built
+  from the live config, and the live state names the primary and the fallback.
+- The Docs page had two `h1` headings; links between documents led to a 404; an unknown URL showed
+  React Router's raw error; the React Flow attribution was hidden against its licence; the reel
+  mixed `animation` with `animationPlayState`. All fixed.
+- On phones, the docked robot covered each page's last controls. It is now smaller there, without
+  the bubble, and pages have room to scroll clear of it.
 
 ## Not done or changed from the spec
 

@@ -1,7 +1,7 @@
 # API reference
 
 Generated from the gateway's live OpenAPI schema (`GET /openapi.json`, browsable at
-http://127.0.0.1:8000/docs), with notes on what the schema cannot show.
+http://127.0.0.1:8000/api/swagger), with notes on what the schema cannot show.
 
 ## Data plane (OpenAI-compatible)
 
@@ -67,7 +67,7 @@ Chaos endpoints answer 403 unless the gateway runs with `AEGIS_CHAOS_ENABLED=1` 
 | `GET /api/scenarios` | Guided Chaos Lab scenarios |
 | `POST /api/scenarios/{name}` | Start a guided scenario; progress streams as events |
 | `POST /api/playground/burst` | N concurrent requests (distinct prompts by default) |
-| `POST /api/playground/duplicate` | N identical concurrent requests (coalescing test) |
+| `POST /api/playground/duplicate` | N identical concurrent requests (coalescing test), fired from the gateway; optional `model`, `key`, `temperature`, `no_cache` |
 | `POST /api/playground/flood` | Rapid requests on the low-limit key (429 test) |
 | `POST /api/selfcheck` | End-to-end probe: embed, cache lookup, 1-token generation |
 | `GET /api/config` | The effective gateway configuration |

@@ -27,7 +27,7 @@ assignment5/
     pyproject.toml         uv project (Python 3.12)
     config/gateway.yaml    backends, model chains, keys, cache/router/breaker tuning (hot-reloaded)
     aegis/                 the gateway (see ARCHITECTURE.md, Source map)
-    tests/                 55 tests: units, HTTP end-to-end with fake backends, SIGSTOP integration
+    tests/                 61 tests: units, HTTP end-to-end with fake backends, SIGSTOP integration
   frontend/
     src/                   React 19 + TypeScript
     e2e/                   Playwright tests against `make dev`
