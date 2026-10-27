@@ -126,3 +126,33 @@ Frame times are measured in Chromium on the Mac GPU (`make perf`). Two findings 
 full-screen blend-mode layers (grain, cursor glow) and continuously animated conic borders and
 box-shadows forced repaints, so they were made static or composited; the architecture graph
 re-rendered every node on each topology poll, so nodes are memoised on what they display.
+
+## Loading: no manual chunks, extras after the first interaction
+
+three.js, ECharts, React Flow and the markdown renderer each sit behind a lazy import, so the
+bundler's automatic split already keeps them off the first page. Hand-written chunk rules were
+removed: they swept small shared helpers into the three.js and React Flow chunks, which Home then
+had to preload (340 KB it never used). The docked 3D robot and the preloading of the other pages
+start on the visitor's first interaction, or after 6–8 s if there is none, so they never compete
+with the first paint. Charts load ECharts when they mount. Home went from 69 to 91 on mobile
+Lighthouse, and tabs still open instantly because their code is fetched before it is needed.
+
+## Page transitions: the old page stays until the new one is ready
+
+The loading boundary sits outside the keyed page element, so a tab switch keeps the current page
+on screen instead of flashing an empty placeholder. The new page settles in 180 ms with no exit
+animation to wait for. Gradient-filled titles animate as one piece, because `background-clip: text`
+cannot paint child words while they are mid-transform.
+
+## LiteLLM installed by default, pinned
+
+`make setup` installs the `litellm` extra so the optional adapter can be demonstrated. It is
+pinned to 1.80.0, below the 1.82.7 and 1.82.8 releases compromised in the March 2026 supply-chain
+incident. The core path still does not depend on it: without it the backend shows "disabled" and
+the gateway runs normally.
+
+## Fixed date and number formats
+
+Times use `en-GB` (24-hour) and counts use `en-US` grouping everywhere, instead of the visitor's
+locale. Demo screenshots, the docs and the narrated scenarios then read the same on any machine.
+This is a deliberate exception to the Web Interface Guidelines' "use the browser locale" rule.

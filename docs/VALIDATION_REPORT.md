@@ -4,9 +4,11 @@ Measured on 2026-10-27 on the build machine: an Apple Silicon Mac with 16 GB, a 
 and Colima (2 CPU / 2 GB) for Redis Stack and Jaeger. The system was the real one (`make dev`):
 MLX Qwen2.5-3B-4bit as primary, Ollama llama3.2:3b as fallback. Nothing below is simulated.
 
-**Verdict: every functional criterion passes. Two performance targets are partial:**
-- Mobile Lighthouse scores 61–69 (the 85 target applies to desktop Home, which scores 91).
-- The Architecture page holds 74–82 fps under traffic, not 120.
+**Verdict: every acceptance criterion passes.** Home scores 100 in Lighthouse on desktop and 91 on
+mobile (target 85), and every scenario runs at 60 fps or more. Known limits:
+- Mobile Lighthouse on Architecture and Control Room is 81–82, below 85; the target applies to Home only.
+- The Architecture page runs at 60–80 fps while the local models answer, not the display's 120.
+- The assistant runs on a 3B model, so an unusual phrasing can still get a wrong number.
 
 ## Test suites
 
@@ -18,9 +20,10 @@ MLX Qwen2.5-3B-4bit as primary, Ollama llama3.2:3b as fallback. Nothing below is
 | Types (frontend) | `npx tsc -b` | **pass** |
 | Lint (frontend, bans `Math.random`) | `npx eslint src` | **pass** |
 | Frontend unit | `npm test` (vitest) | **7 passed**, including the `Math.random` guard |
-| End-to-end, real system, dev server | `make e2e` (Playwright) | **14 passed**, twice in a row |
-| End-to-end, production build served by the gateway | `AEGIS_SITE_URL=http://127.0.0.1:8000 npm run e2e` | **14 passed** |
-| Page sweep, desktop and phone width, dev and production | `make sweep` | **20 of 20 clean** |
+| End-to-end, real system, dev server | `make e2e` (Playwright) | **16 passed** |
+| End-to-end, production build served by the gateway | `AEGIS_SITE_URL=http://127.0.0.1:8000 npm run e2e` | **16 passed** |
+| Page sweep at 1440, 1280, 768 and 390 px | `make sweep` | **40 of 40 clean** |
+| Tab switching, dev and production | `node frontend/tools/tabs.mjs` | every tab fully shown in 0.1–0.3 s, never blank |
 
 The e2e suite covers:
 - the Home scroll journey through all five regions;
@@ -35,9 +38,11 @@ The e2e suite covers:
 - Traces: picking a trace shows its waterfall and its Jaeger link;
 - Architecture: clicking a node opens its details, and so does tapping one on a phone;
 - Docs: links between documents open inside the site;
-- a 404 page with a way back, and the Pause motion control.
+- a 404 page with a way back, and the Pause motion control;
+- LiteLLM: the optional adapter is up and serves a real request through the gateway;
+- the Chaos Lab's live path graph shows a killed primary's open breaker.
 
-The page sweep (`make sweep`) loads all 10 routes at 1440 px and 390 px. On each load it checks for:
+The page sweep (`make sweep`) loads all 10 routes at 1440, 1280, 768 and 390 px. On each load it checks for:
 - console errors and warnings;
 - failed or 4xx/5xx requests;
 - horizontal overflow;
@@ -45,7 +50,7 @@ The page sweep (`make sweep`) loads all 10 routes at 1440 px and 390 px. On each
 - images without `alt`;
 - buttons or links without a name.
 
-All 20 loads are clean. Two further checks also passed:
+All 40 loads are clean. Two further checks also passed:
 - **Offline replay:** every page with the API and WebSocket blocked shows the replay banner and has no errors.
 - **Docs:** all 9 documents load, and all 15 links between them resolve.
 
@@ -73,7 +78,7 @@ All 20 loads are clean. Two further checks also passed:
 | Cost shown as "est. cloud equivalent" (correction 3) | Control Room and Playground labels | pass |
 | OTel gen_ai spans to Jaeger | `test_every_stage_is_a_span_with_genai_conventions`; traces visible in Jaeger and the Traces page | pass |
 | Chaos endpoints dev-only | 403 unless `AEGIS_CHAOS_ENABLED=1` (`aegis/chaos.py`, `api/control.py`) | pass |
-| LiteLLM optional adapter | `aegis-litellm` model; shown as optional, the gateway runs without it | pass |
+| LiteLLM optional adapter | `litellm==1.80.0` installed by `make setup` (pinned below the compromised 1.82.7/1.82.8 releases); `aegis-litellm` streams and returns usage through the gateway; e2e test; the gateway still runs without it | pass |
 
 ## Site criteria
 
@@ -90,13 +95,22 @@ All 20 loads are clean. Two further checks also passed:
 
 | Page | Desktop perf | Mobile perf | A11y | Best practices | Desktop LCP / TBT / CLS |
 | --- | --- | --- | --- | --- | --- |
-| Home | **91** | 69 | 100 | 100 | 1.0 s / 210 ms / 0.001 |
-| Architecture | 88 | 67 | 100 | 100 | 1.1 s / 240 ms / 0.001 |
-| Control Room | 95 | 61 | 100 | 100 | 1.3 s / 0 ms / 0.001 |
+| Home | **100** | **91** | 100 | 100 | 0.6 s / 0 ms / 0.004 |
+| Architecture | 98 | 81 | 100 | 100 | 1.1 s / 0 ms / 0 |
+| Control Room | 99 | 82 | 100 | 100 | 0.9 s / 0 ms / 0.001 |
 
-**Home ≥ 85: pass on desktop.** On mobile (simulated slow 4G and 4× CPU throttling) all pages are
-below 85, because LCP is 5–6 s from the JS bundle on a throttled CPU. This is recorded as a known
-gap. Earlier builds scored 96–98 on desktop; the later 3D assistant and the galaxy cost a few points.
+**Home ≥ 85: pass on desktop and on mobile** (simulated slow 4G and 4× CPU throttling; mobile LCP
+3.0 s). The previous build scored 91/69 on Home. Three fixes made the difference:
+
+- **Chunking.** Manual chunk rules had swept small shared helpers into the three.js and React Flow
+  chunks, so Home preloaded 340 KB it never used. The rules were removed; every heavy library was
+  already behind a lazy import, and the automatic split keeps them off the first page.
+- **Deferred extras.** The docked 3D robot and the background preloading of other pages now start
+  on the visitor's first interaction (or after 6–8 s), not during the first paint.
+- **Charts.** ECharts loads when a chart mounts, so a dashboard's text paints before it arrives.
+
+Mobile Architecture and Control Room stay below 85 (their LCP is 4.3 s: React Flow, the 3D galaxy
+and the charts are what those pages are for).
 
 ## Frame times (Chromium on the Mac GPU, `make perf`)
 
@@ -105,12 +119,25 @@ gap. Earlier builds scored 96–98 on desktop; the later 3D assistant and the ga
 | Home: hero idle | 120 | 9.0 ms | 0 / 479 |
 | Home: scroll through the neuron dive | 118 | 9.1 ms | 1 / 628 |
 | Home: Meet AEGIS + docked robot | 120 | 8.6 ms | 0 / 478 |
-| Architecture (detailed): burst traffic | 82 | 25.0 ms | 13 / 325 |
-| Architecture: 3D galaxy + traffic | 74 | 17.6 ms | 9 / 295 |
-| Control Room: idle | 118 | 8.9 ms | 1 / 472 |
+| Architecture (detailed): burst traffic | 80 | 25.0 ms | 12 / 315 |
+| Architecture: 3D galaxy + traffic | 61 | 33.5 ms | 15 / 244 |
+| Control Room: idle | 117 | 9.0 ms | 2 / 466 |
 
-All scenarios exceed 60 fps. The two Architecture views drop below the display's 120 Hz under burst
-traffic (bloom post-processing plus dozens of animated packets).
+All scenarios are at or above 60 fps. These numbers vary by ±20 fps between runs on this machine
+because other apps (Teams, Slack, WindowServer, endpoint security) use 20–45% CPU in the background.
+
+The Architecture views drop below 120 Hz only while the local models are answering:
+- Six requests answered from cache move as many packets and hold 116 fps.
+- Six answered by the models drop to about 60–80 fps.
+- The Docs page holds 118 fps through the same model burst.
+
+A CPU profile shows the main thread idle 85% of the time during a burst, so the remaining cost is
+in rendering, not JavaScript. Two hotspots the profiles did find were fixed:
+- SVG path lookups for packet positions went from 310 ms to 8 ms per burst, by sampling each path once.
+- Chart colour tokens are no longer re-read from computed CSS on every update (128 ms per 5 s at idle).
+
+A same-session A/B showed the spinning node borders were not the bottleneck. They now run only on
+active nodes anyway, and the planet pulse uses transform and opacity only.
 
 ## Memory (`make memory`)
 
@@ -200,4 +227,35 @@ Found by the deep-testing pass:
 - DeBERTa injection classifier: dropped for the 16 GB budget; a regex check stands in, as documented.
 - The Architecture Overview and Trace tabs were removed at the user's request; their content now
   lives in the Detailed view.
-- The mobile Lighthouse target (see above).
+- Mobile Lighthouse on Architecture and Control Room (81–82; the target is for Home, which is 91).
+
+## Final audit against the original spec (deep pass)
+
+Each phase was re-read against the build prompt. Four gaps were found and closed:
+- **LiteLLM was not installed**, so the optional adapter showed "disabled". It is now installed by
+  `make setup`, verified with streaming and non-streaming requests, and covered by an e2e test.
+- **The Chaos Lab had live charts but no mini architecture graph.** It now has a "Live path" graph.
+  It shows requests, then the gateway, the router and each backend, with real health, breaker
+  countdowns and slot use. Every real event sends a packet coloured by outcome. An e2e test kills
+  the primary and checks the graph shows its breaker open.
+- **The Vercel Web Interface Guidelines audit had no recorded result.** It was run against the
+  latest rules:
+  - No `transition: all`, removed outlines, zoom lock, clickable divs, autofocus or blocked paste.
+  - Images are sized and have alt text.
+  - The theme colour and `color-scheme` are set.
+  - Two findings were fixed: the Traces filter now lives in the URL (`?outcome=`), and the Control
+    Room `<select>` has a solid background so native options stay readable.
+  - Dates and numbers use fixed `en-GB`/`en-US` formats on purpose, so demo screenshots and the
+    docs match (see DECISIONS).
+- **Screenshots at 1280 px and 768 px.** These were added to the sweep. At 768 px the docked robot
+  covered the request table, so the compact robot now applies below 1024 px.
+
+Also fixed on the user's report: **switching tabs felt slow.** The old page waited 0.3 s to fade
+out, the new page flashed blank for about 0.5 s while it loaded, and the headline appeared last
+(about 0.75 s). Now:
+- pages are preloaded after the first interaction;
+- the loading boundary keeps the current page on screen until the next is ready;
+- shimmered titles animate as one piece, so they are visible from the first frame (gradient text
+  cannot paint words that are mid-animation).
+
+Every tab is fully shown in 0.1–0.3 s, never blank (`tools/tabs.mjs`).

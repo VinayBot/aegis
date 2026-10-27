@@ -13,7 +13,7 @@ events.
 ## Run it
 
 ```bash
-make setup   # once: Python + Node deps, Playwright Chromium, mlx-lm, llama3.2:3b
+make setup   # once: Python + Node deps (incl. the optional LiteLLM adapter), Playwright Chromium, mlx-lm, llama3.2:3b
 make dev     # Redis + Jaeger (Colima), mlx_lm.server, Ollama, gateway :8000, site :5173
 ```
 
@@ -32,7 +32,7 @@ curl -N http://127.0.0.1:8000/v1/chat/completions \
 ```
 
 Other targets: `make test` (backend + frontend tests, needs `make infra`), `make e2e` (browser tests
-against `make dev`), `make lint`, `make typecheck`, `make record-fixture`, `make memory`, `make perf`, `make sweep` (every page at desktop and phone width).
+against `make dev`), `make lint`, `make typecheck`, `make record-fixture`, `make memory`, `make perf`, `make sweep` (every page at 1440, 1280, 768 and 390 px).
 
 ## The request path
 
@@ -80,7 +80,7 @@ count that price as saved. Estimates are flagged ±30% when a backend omits `usa
 | Home | The robot, a scroll dive through its face screen into a live neuron field, a tunnel of the site's pages, live counters, and Meet AEGIS |
 | Architecture | Two views of the real topology, animated only by `/ws/events`: a 3D galaxy (one comet per request) and a detailed live node map; trace replay, self-check, export |
 | Control Room | Gauges, heartbeat, KPIs, charts, tenants and the live request feed |
-| Chaos Lab | Latency, error and kill switches per backend, and six guided scenarios |
+| Chaos Lab | Latency, error and kill switches per backend, a live path graph of every backend, and six guided scenarios |
 | Playground | Hand-made requests with a live per-stage trace; "send 10× at once"; "rephrase and resend" |
 | Traces | Jaeger traces as in-app waterfalls |
 | Docs | These documents |
