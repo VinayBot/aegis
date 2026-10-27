@@ -1,7 +1,7 @@
 // Traces from Jaeger's query API, as an in-app list with a waterfall per request.
 import { BlurWords } from "../components/fx";
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { backendLabel, fmtAgo, fmtMs } from "../lib/format";
 import { useLive } from "../lib/live";
@@ -54,7 +54,10 @@ function Waterfall({ trace }: { trace: TraceView }) {
 
 export default function Traces() {
   const mode = useLive((s) => s.mode);
-  const [filter, setFilter] = useState("");
+  // The filter lives in the URL (?outcome=), so a filtered view can be linked and survives reload.
+  const [params, setParams] = useSearchParams();
+  const filter = params.get("outcome") ?? "";
+  const setFilter = (v: string) => setParams((p) => { if (v) p.set("outcome", v); else p.delete("outcome"); return p; }, { replace: true });
   const [traces, setTraces] = useState<TraceView[]>([]);
   const [jaeger, setJaeger] = useState("http://127.0.0.1:16686");
   const [selected, setSelected] = useState<TraceView | null>(null);

@@ -1,4 +1,4 @@
-// Loads every page at desktop and phone width and reports console errors, failed requests,
+// Loads every page at 1440, 1280, 768 and 390 px and reports console errors, failed requests,
 // horizontal overflow, heading count, images without alt and unnamed controls; saves phone shots.
 //   node tools/sweep.mjs [out-dir]   (SITE=http://127.0.0.1:8000 to sweep the production build)
 import { mkdirSync } from "node:fs";
@@ -10,7 +10,7 @@ const pages = ["/", "/architecture", "/architecture?view=detailed", "/control-ro
 const b = await chromium.launch({ args: ["--use-angle=metal"] });
 const ignore = /GL Driver Message|THREE\.Clock|React Router Future|Download the React DevTools/;
 const links = new Set();
-for (const [w, h] of [[1440, 900], [390, 844]]) {
+for (const [w, h] of [[1440, 900], [1280, 800], [768, 1024], [390, 844]]) {
   for (const path of pages) {
     const ctx = await b.newContext({ viewport: { width: w, height: h } });
     const p = await ctx.newPage();
@@ -43,7 +43,7 @@ for (const [w, h] of [[1440, 900], [390, 844]]) {
     if (info.broken.length) flags.push(`broken images ${info.broken.join(",")}`);
     if (info.unnamed) flags.push(`${info.unnamed} unnamed buttons/links`);
     console.log(`${w} ${path.padEnd(28)} ${[...new Set(problems)].concat(flags).join("\n      ") || "ok"}`);
-    if (w === 390) await p.screenshot({ path: `${OUT}/m${path.replace(/[/?=.]/g, "_")}.png` });
+    if (w <= 768) await p.screenshot({ path: `${OUT}/${w}${path.replace(/[/?=.]/g, "_")}.png` });
     await ctx.close();
   }
 }

@@ -1,7 +1,7 @@
 .PHONY: perf sweep setup infra dev test test-backend test-frontend e2e lint typecheck build serve record-fixture memory assets clean
 
 setup: ## install everything (Python deps, spaCy model, Node deps, Playwright browser, models)
-	cd backend && uv sync
+	cd backend && uv sync --extra litellm  # LiteLLM is the optional adapter; installed so it can be demonstrated
 	cd frontend && npm install && npx playwright install chromium
 	uv tool install --python 3.12 mlx-lm
 	ollama pull llama3.2:3b

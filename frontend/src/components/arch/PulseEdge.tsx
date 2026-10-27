@@ -13,6 +13,32 @@ const PACKET: Record<PacketKind, { fill: string; r: number; fade?: boolean }> = 
   probe: { fill: "var(--cyan-hi)", r: 4 },
 };
 
+// getPointAtLength is slow and was the hottest call during bursts (one per packet per frame), so
+// each edge's path is sampled once per shape and positions are interpolated from the samples.
+const SAMPLES = 64;
+const sampled = new WeakMap<SVGPathElement, { d: string; xy: Float32Array }>();
+
+function pointOn(path: SVGPathElement, frac: number): { x: number; y: number } {
+  const d = path.getAttribute("d") ?? "";
+  let cache = sampled.get(path);
+  if (!cache || cache.d !== d) {
+    const len = path.getTotalLength();
+    const xy = new Float32Array((SAMPLES + 1) * 2);
+    for (let i = 0; i <= SAMPLES; i++) {
+      const pt = path.getPointAtLength((len * i) / SAMPLES);
+      xy[i * 2] = pt.x;
+      xy[i * 2 + 1] = pt.y;
+    }
+    cache = { d, xy };
+    sampled.set(path, cache);
+  }
+  const f = Math.min(1, Math.max(0, frac)) * SAMPLES;
+  const i = Math.min(SAMPLES - 1, Math.floor(f));
+  const k = f - i;
+  const { xy } = cache;
+  return { x: xy[i * 2] + (xy[i * 2 + 2] - xy[i * 2]) * k, y: xy[i * 2 + 1] + (xy[i * 2 + 3] - xy[i * 2 + 1]) * k };
+}
+
 const STROKE: Record<string, string> = {
   flow: "var(--edge)",
   hedge: "var(--amber)",
@@ -23,7 +49,7 @@ const STROKE: Record<string, string> = {
 };
 
 /** Where a packet lands: a ripple ring and a small burst of sparks. */
-function arrive(g: SVGGElement, at: DOMPoint, fill: string) {
+function arrive(g: SVGGElement, at: { x: number; y: number }, fill: string) {
   const ns = "http://www.w3.org/2000/svg";
   const ring = document.createElementNS(ns, "circle");
   ring.setAttribute("cx", String(at.x));
@@ -76,7 +102,6 @@ export default function PulseEdge(props: EdgeProps) {
         const g = layer.current;
         if (!p || !g) return;
         const style = PACKET[packetKind];
-        const len = p.getTotalLength();
         // a comet: a bright head and a fading tail of five trailing dots
         const parts: SVGCircleElement[] = [];
         for (let i = 0; i < 6; i++) {
@@ -92,10 +117,10 @@ export default function PulseEdge(props: EdgeProps) {
           parts.push(c);
         }
         const dot = parts[0];
-        const trail: DOMPoint[] = [];
+        const trail: { x: number; y: number }[] = [];
         if (reduced) {
           // Reduced motion: no travel; the packet blinks at the destination end instead.
-          const end = p.getPointAtLength(len);
+          const end = pointOn(p, 1);
           dot.setAttribute("cx", String(end.x));
           dot.setAttribute("cy", String(end.y));
           parts.slice(1).forEach((c) => c.remove());
@@ -107,7 +132,7 @@ export default function PulseEdge(props: EdgeProps) {
           const t = Math.min(1, (now - start) / durationMs);
           const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
           const limit = style.fade ? 0.55 : 1;
-          trail.unshift(p.getPointAtLength(len * eased * limit)); // one path lookup per frame
+          trail.unshift(pointOn(p, eased * limit));
           if (trail.length > 12) trail.pop();
           parts.forEach((c, i) => {
             const pt = trail[Math.min(trail.length - 1, i === 0 ? 0 : i * 2 - 1)];
@@ -118,7 +143,7 @@ export default function PulseEdge(props: EdgeProps) {
           if (t < 1) requestAnimationFrame(step);
           else {
             parts.forEach((c) => c.remove());
-            if (!style.fade) arrive(g, p.getPointAtLength(len), style.fill);
+            if (!style.fade) arrive(g, pointOn(p, 1), style.fill);
           }
         };
         requestAnimationFrame(step);

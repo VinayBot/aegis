@@ -155,8 +155,9 @@ body {
 .arch-node[data-active="true"] { transform: scale(1.06); box-shadow: inset 0 0 0 1px var(--cyan), var(--glow-cyan), var(--glow-violet); }
 .arch-node::after { content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1.5px; pointer-events: none;
   background: var(--grad-border); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor; mask-composite: exclude; opacity: 0; transition: opacity var(--dur-std); animation: spin-angle 2.4s linear infinite; }
-.arch-node[data-active="true"]::after { opacity: 1; }
+  -webkit-mask-composite: xor; mask-composite: exclude; opacity: 0; transition: opacity var(--dur-std); }
+/* the spinning border repaints every frame (it animates a custom property), so only active nodes run it */
+.arch-node[data-active="true"]::after { opacity: 1; animation: spin-angle 2.4s linear infinite; }
 .arch-node:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px var(--glass-edge-hi), var(--glow-violet); }
 .arch-node[data-flash="red"] { box-shadow: inset 0 0 0 1.5px var(--red), var(--glow-red); }
 .arch-node[data-flash="amber"] { box-shadow: inset 0 0 0 1.5px var(--amber), var(--glow-amber); }
@@ -352,13 +353,16 @@ body { background: transparent; }
 .planet-down { background: radial-gradient(circle at 35% 30%, var(--red-hi), var(--red) 60%, var(--red-lo)); box-shadow: 0 0 14px -2px var(--red); }
 .planet-degraded { background: radial-gradient(circle at 35% 30%, var(--amber-hi), var(--amber) 60%, var(--amber-lo)); box-shadow: 0 0 14px -2px var(--amber); }
 .planet-disabled, .planet-unknown, .planet-starting { background: radial-gradient(circle at 35% 30%, var(--idle-hi), var(--ink-faint) 65%); box-shadow: none; }
-.arch-node[data-active="true"] .planet { animation: planet-pulse 0.9s ease-in-out infinite; }
-@keyframes planet-pulse { 50% { box-shadow: 0 0 0 6px var(--cyan-wash), 0 0 22px var(--cyan); } }
+/* an active node's planet sends out a ring: transform and opacity only, so it stays on the compositor */
+.arch-node .planet { position: relative; }
+.arch-node[data-active="true"] .planet::after { content: ""; position: absolute; inset: -2px; border-radius: 50%;
+  border: 2px solid var(--cyan); pointer-events: none; animation: planet-ring 0.9s ease-out infinite; }
+@keyframes planet-ring { from { transform: scale(1); opacity: 0.9; } to { transform: scale(1.7); opacity: 0; } }
 .graph-space { background-color: var(--space-0);
   background-image: var(--stardust-a), var(--stardust-b); background-size: 180px 180px, 260px 260px; }
 .journey-step[data-hot="true"] .planet { box-shadow: 0 0 0 5px var(--cyan-wash), 0 0 24px var(--cyan); transform: scale(1.12); }
 .journey-step .planet { transition: transform 0.3s var(--ease-ui), box-shadow 0.3s var(--ease-ui); }
-@media (prefers-reduced-motion: reduce) { .arch-node[data-active="true"] .planet { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .arch-node[data-active="true"] .planet::after { animation: none; opacity: 0; } }
 .journey-arrow { position: absolute; right: -6px; top: 12px; width: 14px; height: 2px; background: var(--edge); }
 .journey-arrow::after { content: ""; position: absolute; right: 0; top: -3px; border: 4px solid transparent; border-left-color: var(--edge); transform: translateX(6px); }
 

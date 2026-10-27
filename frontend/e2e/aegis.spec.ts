@@ -184,3 +184,31 @@ test("architecture: tapping a node on a phone opens its details", async ({ brows
     await ctx.close();
   }
 });
+
+test("litellm: the optional adapter serves a real request through the gateway", async ({ request }) => {
+  const health = await (await request.get(`${API}/api/health`)).json();
+  expect(health.components["backend:litellm-ollama"].status).toBe("up");
+  const r = await request.post(`${API}/v1/chat/completions`, {
+    headers: { authorization: "Bearer aegis-demo-key", "cache-control": "no-cache" },
+    data: { model: "aegis-litellm", stream: false, temperature: 0, max_tokens: 8, messages: [{ role: "user", content: `Name one planet. (${Date.now()})` }] },
+    timeout: 90_000,
+  });
+  expect(r.status()).toBe(200);
+  expect(r.headers()["x-aegis-backend"]).toBe("litellm-ollama");
+  const body = await r.json();
+  expect(body.choices[0].message.content.length).toBeGreaterThan(0);
+  expect(body.usage.total_tokens).toBeGreaterThan(0);
+});
+
+test("chaos lab: the live path graph shows a killed primary's open breaker", async ({ page, request }) => {
+  await page.goto("/chaos");
+  const graph = page.getByRole("region", { name: "Live path" });
+  await expect(graph.getByRole("img")).toHaveAttribute("aria-label", /MLX primary: up/, { timeout: 15_000 });
+  try {
+    await request.post(`${API}/api/chaos`, { data: { backend: "mlx-qwen", action: "kill", value: true } });
+    await expect(graph.getByRole("img")).toHaveAttribute("aria-label", /MLX primary: (breaker open|down)/, { timeout: 10_000 });
+  } finally {
+    await request.post(`${API}/api/chaos/revert`);
+    await request.post(`${API}/api/breakers/mlx-qwen/reset`);
+  }
+});

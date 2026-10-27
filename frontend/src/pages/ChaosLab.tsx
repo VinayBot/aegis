@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import Chart from "../components/Chart";
+import MiniGraph from "../components/MiniGraph";
 import RequestFeed from "../components/RequestFeed";
 import { api } from "../lib/api";
 import { fmtClock, fmtMs } from "../lib/format";
@@ -194,6 +195,7 @@ export default function ChaosLab() {
             </div>
             <div className="mt-3"><Narration runId={runId} /></div>
           </section>
+          <MiniGraph />
           {s && (
             <>
               <Chart title="Time to first token, p95" t={t} height={160} series={[{ name: "TTFT p95", data: s.ttft_p95, color: "--cyan", area: true }]} format={(v) => fmtMs(v)} />

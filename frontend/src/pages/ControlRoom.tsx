@@ -208,7 +208,7 @@ export default function ControlRoom() {
               markLine={limit ? { value: limit, label: `${fmtInt(limit)} tpm limit (${key})`, color: "--red" } : undefined} />
             <label className="mt-2 flex items-center gap-2 text-sm text-ink-mute">
               Limit shown for
-              <select value={key} onChange={(e) => setKey(e.target.value)} className="glass min-h-9 px-2 text-ink">
+              <select value={key} onChange={(e) => setKey(e.target.value)} className="min-h-9 rounded-[var(--radius-sm)] px-2 text-ink" style={{ background: "var(--space-1)" }}>
                 {Object.entries(metrics.limits).map(([k2, v]) => <option key={k2} value={k2}>{v.tenant}</option>)}
               </select>
               <span className="font-tabular">now {fmtInt(tpmNow)} / {fmtInt(limit)} tpm</span>
