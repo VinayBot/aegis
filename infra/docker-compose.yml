@@ -1,0 +1,20 @@
+# Side systems only: the gateway, the models and the frontend run natively on the Mac.
+name: aegis
+services:
+  redis:
+    image: redis/redis-stack-server:7.4.0-v3
+    ports: ["6379:6379"]
+    environment:
+      REDIS_ARGS: "--save '' --appendonly no --maxmemory 256mb --maxmemory-policy allkeys-lru"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+  jaeger:
+    image: jaegertracing/jaeger:2.11.0
+    ports:
+      - "16686:16686"   # UI + query API
+      - "4317:4317"     # OTLP gRPC
+      - "4318:4318"     # OTLP HTTP
+    restart: unless-stopped

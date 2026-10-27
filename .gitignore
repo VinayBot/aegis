@@ -1,0 +1,30 @@
+# tool scratch
+.arena/
+.taste-skill/
+.claude/skills/
+.claude/settings.local.json
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+# runtime data
+var/
+*.sqlite3
+*.sqlite3-*
+# node
+node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+frontend/.lighthouse/
+# os
+.DS_Store
+
+# build/tool state
+frontend/tsconfig.tsbuildinfo
+skills-lock.json
