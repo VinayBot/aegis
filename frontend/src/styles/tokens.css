@@ -1,0 +1,109 @@
+/* AEGIS design tokens. The only file allowed to contain colour literals.
+   Sampled from the two robot pictures (scripts/build_assets.py, DESIGN.md):
+   - space: robot-standing's starfield (23,32,65) deepened toward black
+   - cyan: the LED face of robot-hover (144,200,243) and the eye rings of robot-standing (153,214,233)
+   - violet: robot-hover's backdrop (200,165,243) -> (122,130,205) */
+
+:root {
+  /* ground */
+  --space-0: #000000;
+  --space-1: #06070c;
+  --space-2: #0c0f1a;
+  --nebula: #0b0d1c;
+
+  /* ink */
+  --ink: #eaf0ff;
+  --ink-soft: #b9c3e6;
+  --ink-mute: #8a95bf;
+  --ink-faint: #5b6690;
+
+  /* light */
+  --cyan: #74d7f7;
+  --cyan-hi: #b8ecff;
+  --cyan-deep: #2a8fb8;
+  --violet: #c4a2f5;
+  --violet-deep: #7a82cd;
+  --amber: #ffc25c;
+  --red: #ff6b7a;
+  --green: #79e8b3;
+  --magenta: #a9b4f5; /* retired as a hue: kept as a soft periwinkle so nothing turns pink */
+  --blue: #8ea2f0;
+  --slate: #6b7699;
+
+  /* signature gradients (the robots' own light: LED cyan through backdrop violet) */
+  --grad-signal: linear-gradient(100deg, #eaf0ff 0%, #eaf0ff 38%, #c9f1ff 50%, #eaf0ff 62%, #eaf0ff 100%);
+  --grad-button: linear-gradient(110deg, #8fdcf6 0%, #74d7f7 45%, #9fb4f5 100%);
+  --grad-border: conic-gradient(from var(--angle), transparent 0deg, rgba(116, 215, 247, 0.9) 70deg, rgba(160, 175, 245, 0.7) 140deg, transparent 220deg);
+  --flame: radial-gradient(ellipse at 50% 0%, #ffffff 0%, #b8ecff 18%, #74d7f7 38%, rgba(196, 162, 245, 0.75) 62%, transparent 75%);
+  --pad: radial-gradient(closest-side, rgba(116, 215, 247, 0.55), rgba(196, 162, 245, 0.25) 55%, transparent 75%);
+  --meet-scrim: radial-gradient(ellipse at 50% 70%, rgba(10, 14, 40, 0.10), rgba(0, 0, 0, 0.6) 80%);
+  --star: #eaf6ff;
+  --red-hi: #ffd0d6;
+  --red-lo: #8a2030;
+  --amber-hi: #ffe8c0;
+  --amber-lo: #8a5a10;
+  --idle-hi: #c8cee0;
+  --stardust-a: radial-gradient(1px 1px at 20px 30px, rgba(234, 246, 255, 0.55), transparent), radial-gradient(1px 1px at 120px 90px, rgba(234, 246, 255, 0.35), transparent), radial-gradient(1.5px 1.5px at 70px 150px, rgba(184, 236, 255, 0.5), transparent);
+  --stardust-b: radial-gradient(1px 1px at 200px 40px, rgba(234, 246, 255, 0.3), transparent), radial-gradient(1px 1px at 40px 210px, rgba(196, 210, 255, 0.4), transparent);
+  --meet-nebula: radial-gradient(ellipse 55% 45% at 50% 55%, rgba(60, 140, 220, 0.28), rgba(40, 60, 140, 0.12) 50%, transparent 75%);
+  --scan-beam: linear-gradient(180deg, transparent 0%, rgba(184, 236, 255, 0) 42%, rgba(184, 236, 255, 0.55) 50%, rgba(184, 236, 255, 0) 58%, transparent 100%);
+  --bot-shell-hi: #ffffff;
+  --bot-shell-lo: #c5d0ea;
+  --bot-dark: #0b1024;
+  --bot-panel: #dfe6f7;
+  --jet-metal: linear-gradient(180deg, #f4f7ff 0%, #c9d3ea 55%, #8e9bbd 100%);
+  --spot: rgba(150, 210, 255, 0.10);
+  --spot-violet: rgba(196, 162, 245, 0.10);
+  --cursor-glow: radial-gradient(closest-side, rgba(140, 190, 255, 0.07), transparent 70%);
+  --warp: radial-gradient(circle, rgba(184, 236, 255, 0.0) 0%, rgba(184, 236, 255, 0.12) 35%, rgba(196, 162, 245, 0.10) 55%, transparent 70%);
+  --alarm-vignette: radial-gradient(ellipse at center, transparent 55%, rgba(255, 70, 90, 0.35) 100%);
+  --scanlines: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.025) 0px, rgba(255, 255, 255, 0.025) 1px, transparent 1px, transparent 3px);
+
+  /* status roles */
+  --status-live: var(--cyan);
+  --status-degraded: var(--amber);
+  --status-broken: var(--red);
+  --status-cached: var(--violet);
+  --status-idle: var(--ink-faint);
+
+  /* glass (the robot's tablet) */
+  --glass: rgba(14, 16, 26, 0.62);
+  --glass-strong: rgba(8, 9, 16, 0.88);
+  --glass-edge: rgba(210, 225, 255, 0.08);
+  --glass-edge-hi: rgba(210, 225, 255, 0.16);
+  --glass-blur: 12px;
+
+  /* glow (earned: only live, active or important things) */
+  --glow-cyan: 0 0 24px rgba(116, 215, 247, 0.45);
+  --glow-violet: 0 0 24px rgba(196, 162, 245, 0.45);
+  --glow-amber: 0 0 22px rgba(255, 194, 92, 0.45);
+  --glow-red: 0 0 22px rgba(255, 107, 122, 0.5);
+
+  /* scrims and shades */
+  --scrim: rgba(0, 0, 0, 0.72);
+  --shade: rgba(0, 0, 0, 0.45);
+  --line: rgba(160, 180, 230, 0.12);
+  --edge: rgba(150, 175, 235, 0.34);
+  --cyan-wash: rgba(116, 215, 247, 0.12);
+  --violet-wash: rgba(196, 162, 245, 0.14);
+  --amber-wash: rgba(255, 194, 92, 0.14);
+  --red-wash: rgba(255, 107, 122, 0.14);
+  --screen: #03061a;
+  --robot-shadow: rgba(10, 8, 40, 0.55);
+
+  /* type */
+  --font-display: "Oxanium Variable", "Sora Variable", system-ui, sans-serif;
+  --font-ui: "Sora Variable", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+
+  /* motion */
+  --dur-micro: 120ms;
+  --dur-std: 200ms;
+  --dur-large: 320ms;
+  --ease-ui: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* layout */
+  --gutter: clamp(16px, 2.4vw, 32px);
+  --radius: 14px;
+  --radius-sm: 8px;
+}
