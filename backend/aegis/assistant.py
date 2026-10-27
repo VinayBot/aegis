@@ -25,6 +25,7 @@ import numpy as np
 from aegis.state import AppState
 
 API_KEY = "aegis-assistant-key"
+MODEL = "aegis-chat"
 MIN_SIMILARITY = 0.58
 NO_ANSWER = "The project docs don't cover that, so I won't guess."
 
@@ -90,6 +91,11 @@ class DocsIndex:
                 ]
             else:
                 chunks += _split_markdown(rel, text)
+        # The YAML and the docs' tables are hard for a 3B model to read correctly, so the numbers
+        # and failure behaviours that matter are also stated as plain sentences.
+        chunks.append(
+            Chunk("config/gateway.yaml", "Gateway settings in plain words", settings_facts(self.s))
+        )
         if openapi:
             lines = [
                 f"{method.upper()} {path}: {op.get('summary') or op.get('description', '')}"
@@ -115,11 +121,44 @@ class DocsIndex:
         return [(self.chunks[i], float(sims[i])) for i in order]
 
 
+def settings_facts(state: AppState) -> str:
+    cfg = state.config.get()
+    br, ro, ca = cfg.breaker, cfg.router, cfg.cache
+    return "\n".join(
+        [
+            f"- Circuit breaker: it opens after {br.error_threshold} consecutive errors, or at once on "
+            f"a first-token timeout. Once open it stays open for {br.open_seconds:g} seconds, and traffic "
+            "skips that backend. Then it is half-open: exactly one live request probes it; success "
+            "closes the breaker, failure opens it again.",
+            f"- First-token timeout: {ro.first_token_timeout_seconds:g} seconds plus 1 second per 1,000 "
+            "prompt tokens.",
+            f"- Hedging: after the primary's p95 time to first token (never sooner than "
+            f"{ro.hedge_min_ms:g} ms; {ro.hedge_default_ms:g} ms before there is enough history) the "
+            "request is also sent to a free backend; the first to stream wins.",
+            f"- Busy backend: wait up to {ro.slot_wait_seconds:g} seconds for a free slot, then try the "
+            f"next backend; nothing free for {ro.queue_deadline_seconds:g} seconds returns 503.",
+            f"- Semantic cache: a cosine similarity of at least {ca.semantic_threshold:g} is a hit; only "
+            f"last messages under {ca.semantic_max_tokens} tokens are looked up; entries live "
+            f"{ca.ttl_seconds // 3600} hours; a lookup slower than {ca.embed_budget_ms} ms is skipped.",
+            "- If Redis is down: the exact and semantic caches are skipped, rate limits fall back to "
+            "an in-process token bucket, and health shows degraded; requests are still answered.",
+            "- If a backend dies mid-stream: the client gets an SSE error event, tokens are estimated "
+            "(plus or minus 30%), and nothing is cached.",
+            "- If the whole gateway is down: the website plays recorded real traffic under a "
+            "'REPLAY: backend offline' banner.",
+        ]
+    )
+
+
 def live_facts(state: AppState) -> str:
-    lines = []
+    lines = [settings_facts(state)]
+    models = state.config.get().models
+    chain = models[MODEL].chain if MODEL in models else []
+    roles = {f"backend:{b}": ("primary" if i == 0 else "fallback") for i, b in enumerate(chain)}
     for name, h in sorted(state.health.items()):
         extra = f", breaker {h['breaker']}" if "breaker" in h else ""
-        lines.append(f"- {name}: {h['status']}{extra} ({h['detail'][:90]})")
+        role = f" (the {roles[name]})" if name in roles else ""
+        lines.append(f"- {name}{role}: {h['status']}{extra} ({h['detail'][:90]})")
     k = state.metrics.kpis(300)["current"]
     hit = "n/a" if k["hit_rate"] is None else f"{k['hit_rate'] * 100:.0f}%"
     lines.append(
@@ -198,7 +237,7 @@ async def answer(
     if no_cache or wants_live:
         headers["cache-control"] = "no-cache"  # live answers must not be replayed later
     body = {
-        "model": "aegis-chat",
+        "model": MODEL,
         "messages": messages,
         "stream": True,
         "temperature": 0,

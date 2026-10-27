@@ -67,6 +67,34 @@ _NAME_PARTICLES = frozenset(
         "e",
     ]
 )
+# Software and model names that spaCy tags as people ("when Redis is down" -> PERSON). Questions
+# about this gateway's own stack must reach the model intact.
+_NOT_NAMES = frozenset(
+    [
+        "aegis",
+        "chroma",
+        "colima",
+        "docker",
+        "fastapi",
+        "gemma",
+        "jaeger",
+        "kafka",
+        "kubernetes",
+        "langfuse",
+        "litellm",
+        "llama",
+        "mistral",
+        "mlx",
+        "nexus",
+        "ollama",
+        "presidio",
+        "qwen",
+        "redis",
+        "uvicorn",
+        "veritas",
+    ]
+)
+
 _ORGANISATION_WORDS = frozenset(
     [
         "collective",
@@ -123,6 +151,9 @@ class GivenNameRecognizer(EntityRecognizer):
 def _plausible_name(span: str) -> bool:
     words = [w for w in re.split(r"[\s,]+", span.strip()) if w]
     if words and words[-1].lower().strip(".") in _ORGANISATION_WORDS:
+        return False
+    letters = [re.sub(r"[^a-z]", "", w.lower()) for w in words]
+    if all(w in _NOT_NAMES for w in letters if w):  # a real name next to "Redis" stays redacted
         return False
     return bool(words) and all(
         w[0].isupper() or not w[0].isalpha() or w.lower() in _NAME_PARTICLES for w in words

@@ -121,6 +121,8 @@ def write_config(tmp: Path, ports: dict[str, int], **overrides: Any) -> Path:
         },
         "keys": {
             "k-demo": {"tenant": "demo", "tpm": 100000, "budget": {"soft": 10, "hard": 20}},
+            # the key the built-in scenarios and Playground load tests send with
+            "aegis-demo-key": {"tenant": "demo", "tpm": 100000, "budget": {"soft": 10, "hard": 20}},
             "k-small": {"tenant": "small", "tpm": 200, "budget": {"soft": 10, "hard": 20}},
             "k-broke": {"tenant": "broke", "tpm": 100000, "budget": {"soft": 0.0, "hard": 0.0}},
         },

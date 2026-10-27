@@ -186,6 +186,23 @@ async def test_coalescing_makes_exactly_one_upstream_call(
     assert all("pong0" in t for t in texts)
 
 
+async def test_duplicate_storm_coalesces_on_every_run(
+    gateway: Gateway, fakes: dict[str, FakeControl]
+) -> None:
+    """Each storm's prompt is near-identical to the last, so a cached answer would hide the
+    coalescer: every run must still make one upstream call and coalesce the other nine."""
+    from aegis import scenarios
+
+    fakes["primary"].first_token_delay = 0.3
+    for run in range(2):
+        before = fakes["primary"].calls + fakes["fallback"].calls
+        results = await scenarios.duplicate(gateway.state, 10)
+        assert all(r["status"] == 200 for r in results), results
+        caches = [r["x_cache"] for r in results]
+        assert caches.count("coalesced") == 9, (run, caches)
+        assert fakes["primary"].calls + fakes["fallback"].calls - before == 1
+
+
 async def test_failover_on_upstream_5xx(gateway: Gateway, fakes: dict[str, FakeControl]) -> None:
     fakes["primary"].status = 503
     r = await gateway.chat("x")
@@ -353,3 +370,15 @@ def test_httpx_is_used_for_backends() -> None:
 
     b = OpenAICompatBackend(BackendConfig(name="x", base_url="http://h/v1", model="m"))
     assert isinstance(b._client, httpx.AsyncClient)
+
+
+async def test_assistant_settings_facts_follow_the_config(gateway: Gateway) -> None:
+    """The assistant reads key numbers as plain sentences built from the live config, not the YAML."""
+    from aegis.assistant import settings_facts
+
+    text = settings_facts(gateway.state)
+    cfg = gateway.state.config.get()
+    assert f"stays open for {cfg.breaker.open_seconds:g} seconds" in text
+    assert f"after {cfg.breaker.error_threshold} consecutive errors" in text
+    assert f"at least {cfg.cache.semantic_threshold:g} is a hit" in text
+    assert "If Redis is down" in text

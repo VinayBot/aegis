@@ -215,6 +215,12 @@ class LoadTest(BaseModel):
     n: int = Field(10, ge=1, le=40)
     prompt: str | None = None
     distinct: bool = True
+    # duplicate only: the Playground's own settings (a browser cannot open ten streams at once,
+    # it allows six per host, so its "10x at once" is fired from here)
+    model: str = "aegis-chat"
+    key: str | None = None
+    temperature: float | None = 0.0
+    no_cache: bool | None = None
 
 
 @router.post("/playground/burst", summary="N concurrent requests (distinct prompts by default)")
@@ -225,7 +231,17 @@ async def pg_burst(request: Request, body: LoadTest) -> dict[str, Any]:
 
 @router.post("/playground/duplicate", summary="N identical concurrent requests (coalescing test)")
 async def pg_duplicate(request: Request, body: LoadTest) -> dict[str, Any]:
-    return {"results": await scenarios.duplicate(_state(request), body.n, body.prompt)}
+    return {
+        "results": await scenarios.duplicate(
+            _state(request),
+            body.n,
+            body.prompt,
+            model=body.model,
+            key=body.key,
+            temperature=body.temperature,
+            no_cache=body.no_cache,
+        )
+    }
 
 
 @router.post("/playground/flood", summary="Rapid requests on the low-limit key (429 test)")

@@ -144,6 +144,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title="AEGIS AI Gateway",
         version=__version__,
         lifespan=lifespan,
+        # /docs belongs to the site (it serves the built frontend); the API explorer lives under /api
+        docs_url="/api/swagger",
+        redoc_url=None,
         description="OpenAI-compatible AI gateway with semantic caching, coalescing, "
         "hedging, failover, rate limits, budgets and live observability.",
     )

@@ -137,10 +137,35 @@ async def burst(
     return [_brief(r) for r in results]
 
 
-async def duplicate(state: AppState, n: int, prompt: str | None = None) -> list[dict[str, Any]]:
+async def duplicate(
+    state: AppState,
+    n: int,
+    prompt: str | None = None,
+    *,
+    model: str = "aegis-chat",
+    key: str | None = None,
+    temperature: float | None = 0.0,
+    no_cache: bool | None = None,
+) -> list[dict[str, Any]]:
     run = uuid.uuid4().hex[:6]
     p = prompt or f"In two sentences, explain request coalescing. (storm {run})"
-    results = await asyncio.gather(*(fire(state, p, max_tokens=60) for _ in range(n)))
+    # The built-in storm bypasses the cache by default: its prompt is near-identical every run, so
+    # the semantic cache would answer it and hide the coalescer, which runs after the cache anyway.
+    bypass = prompt is None if no_cache is None else no_cache
+    results = await asyncio.gather(
+        *(
+            fire(
+                state,
+                p,
+                key=key or DEMO_KEY,
+                model=model,
+                temperature=temperature,
+                max_tokens=60,
+                no_cache=bypass,
+            )
+            for _ in range(n)
+        )
+    )
     return [_brief(r) for r in results]
 
 
@@ -370,13 +395,15 @@ class ScenarioRunner:
         name = "duplicate_storm"
         self._say(run_id, name, "fire", "Ten identical requests, sent at the same moment.")
         results = await duplicate(self.s, 10)
-        leaders = [r for r in results if r.get("x_cache") != "coalesced"]
+        upstream = sum(r.get("x_cache") in ("miss", "bypass") for r in results)
+        coalesced = sum(r.get("x_cache") == "coalesced" for r in results)
+        cached = sum(r.get("x_cache") in ("hit", "semantic") for r in results)
         self._say(
             run_id,
             name,
             "result",
-            f"{len(results)} answers, {len(leaders)} upstream call(s); "
-            f"{len(results) - len(leaders)} coalesced.",
+            f"{len(results)} answers, {upstream} upstream call(s); {coalesced} coalesced"
+            + (f", {cached} from cache." if cached else "."),
             results=results,
         )
 
