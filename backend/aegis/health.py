@@ -2,7 +2,13 @@
 
 A backend probe that fails feeds that backend's breaker as an error, but only when the backend
 has not streamed a token in the last 2 s: busy is not broken. Probe successes never close an
-open breaker; only a live request (the half-open probe) can do that.
+open breaker; only a live request (the half-open probe) can do that. When a breaker is half-open
+and the backend idle, the monitor sends that live request itself (one real token), so an idle
+gateway heals instead of waiting for traffic.
+
+After the host pauses (laptop sleep: the wall clock jumps far past the check interval), every
+probe times out at once. That is the host, not the backends, so probe failures are not counted
+for a short grace period after a pause.
 """
 
 from __future__ import annotations
@@ -14,7 +20,13 @@ from typing import Any
 
 import httpx
 
+from aegis.backends.base import BackendError
+from aegis.router import BackendRuntime
 from aegis.state import AppState
+
+PAUSE_FACTOR = 5  # a gap this many intervals long (and at least PAUSE_MIN_S) means the host paused
+PAUSE_MIN_S = 10.0
+PAUSE_GRACE_S = 10.0
 
 
 def _result(
@@ -36,6 +48,10 @@ class HealthMonitor:
         self._task: asyncio.Task[None] | None = None
         self._client = httpx.AsyncClient(timeout=1.0)
         self._last_published: dict[str, str] = {}
+        self._last_round: float | None = None
+        self._grace_until = 0.0
+        self._probing: set[str] = set()
+        self._probe_tasks: set[asyncio.Task[None]] = set()
 
     def start(self) -> None:
         self._task = asyncio.get_running_loop().create_task(self._loop())
@@ -45,6 +61,8 @@ class HealthMonitor:
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
+        for t in list(self._probe_tasks):
+            t.cancel()
         await self._client.aclose()
 
     async def _loop(self) -> None:
@@ -57,6 +75,14 @@ class HealthMonitor:
         s = self.s
         cfg = s.config.get()
         s.router.sync(cfg)
+        now = time.time()
+        gap = None if self._last_round is None else now - self._last_round
+        self._last_round = now
+        if gap is not None and gap > max(
+            PAUSE_MIN_S, PAUSE_FACTOR * s.settings.health_interval_seconds
+        ):
+            self._grace_until = now + PAUSE_GRACE_S
+            s.bus.publish("health.paused", None, gap_s=round(gap, 1), grace_s=PAUSE_GRACE_S)
         names = list(cfg.backends)
         backend_results = await asyncio.gather(*(self._backend(n) for n in names))
         results: dict[str, Any] = dict(
@@ -91,9 +117,19 @@ class HealthMonitor:
         if rt is None:
             return _result(False, "not configured", 0.0)
         ok, detail, ms = await rt.backend.probe()
-        if not ok and not rt.recently_streaming() and "not installed" not in detail:
+        in_grace = time.time() < self._grace_until
+        if (
+            not ok
+            and not rt.recently_streaming()
+            and "not installed" not in detail
+            and not in_grace
+        ):
             rt.breaker.record_error(f"health probe: {detail}")
         breaker = rt.breaker.current_state()
+        if ok and breaker == "half_open" and rt.in_flight == 0 and name not in self._probing:
+            task = asyncio.get_running_loop().create_task(self._probe_request(name, rt))
+            self._probe_tasks.add(task)
+            task.add_done_callback(self._probe_tasks.discard)
         status = "up" if ok else "down"
         if ok and breaker != "closed":
             status = "degraded"
@@ -102,6 +138,37 @@ class HealthMonitor:
         return _result(
             ok, detail, ms, status, breaker=breaker, in_flight=rt.in_flight, capacity=rt.capacity
         )
+
+    async def _probe_request(self, name: str, rt: BackendRuntime) -> None:
+        """The half-open probe for an idle backend: one real token through the (chaos-wrapped)
+        backend. Live traffic that claims the probe first wins; this then does nothing."""
+        if not rt.breaker.allow():
+            return
+        if not await rt.acquire(0):
+            rt.breaker.release_probe()
+            return
+        self._probing.add(name)
+        timeout = self.s.config.get().router.first_token_timeout_seconds
+        payload = {
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1,
+            "temperature": 0,
+        }
+        stream = rt.backend.stream(payload)
+        try:
+            await asyncio.wait_for(anext(stream), timeout)
+            rt.breaker.record_success()
+        except (TimeoutError, StopAsyncIteration):
+            rt.breaker.record_timeout("idle probe: no first token")
+        except BackendError as exc:
+            rt.breaker.record_error(f"idle probe: {exc.kind}: {exc}")
+        except Exception as exc:  # anything else still decides the probe, never leaves it claimed
+            rt.breaker.record_error(f"idle probe: {type(exc).__name__}: {exc}")
+        finally:
+            with contextlib.suppress(Exception):
+                await stream.aclose()  # type: ignore[attr-defined]
+            rt.release()
+            self._probing.discard(name)
 
     async def _redis(self) -> dict[str, Any]:
         redis = self.s.redis

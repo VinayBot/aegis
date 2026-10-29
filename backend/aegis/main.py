@@ -111,6 +111,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         state.metrics.start()
         state.recorder.start()
         monitor = HealthMonitor(state)
+        state.health_monitor = monitor  # type: ignore[attr-defined]
         await monitor.check_all()
         monitor.start()
         system_events = asyncio.get_running_loop().create_task(_record_system_events(state))

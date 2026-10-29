@@ -14,7 +14,7 @@ mobile (target 85), and every scenario runs at 60 fps or more. Known limits:
 
 | Suite | Command | Result |
 | --- | --- | --- |
-| Backend unit + HTTP integration + SIGSTOP | `make test-backend` | **61 passed** (43 s) |
+| Backend unit + HTTP integration + SIGSTOP | `make test-backend` | **64 passed** (50 s) |
 | Lint and format (backend) | `uv run ruff check .`, `ruff format --check .` | **pass** |
 | Types (backend) | `uv run mypy aegis` | **pass** (no issues in 34 files) |
 | Types (frontend) | `npx tsc -b` | **pass** |
@@ -221,6 +221,23 @@ Found by the deep-testing pass:
   mixed `animation` with `animationPlayState`. All fixed.
 - On phones, the docked robot covered each page's last controls. It is now smaller there, without
   the bubble, and pages have room to scroll clear of it.
+
+## Found in a later health check: breakers stuck after laptop sleep
+
+After the Mac slept overnight, all three backends showed "degraded" with half-open breakers,
+although every model was fine. The cause had two parts:
+- While the Mac slept, every health probe timed out at once, which opened every breaker.
+- Half-open breakers then waited forever for a live request that never came.
+
+Two fixes:
+- Probe failures in the 10 s after a host pause (detected when the wall clock jumps past the check
+  interval) are not counted.
+- When a breaker is half-open and its backend idle, the health monitor sends the one live probe
+  request itself.
+
+Three tests cover this; the pause test fails without the fix. Checked on the real system: freezing
+MLX, then reviving it with no traffic, closed the breaker on its own after 31 s (30 s cool-down plus
+one probe). The backend suite now has 64 tests.
 
 ## Not done or changed from the spec
 

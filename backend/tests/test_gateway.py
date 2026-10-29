@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 import httpx
 import pytest
@@ -382,3 +383,45 @@ async def test_assistant_settings_facts_follow_the_config(gateway: Gateway) -> N
     assert f"after {cfg.breaker.error_threshold} consecutive errors" in text
     assert f"at least {cfg.cache.semantic_threshold:g} is a hit" in text
     assert "If Redis is down" in text
+
+
+async def test_idle_half_open_breaker_heals_with_one_real_probe(
+    gateway: Gateway, fakes: dict[str, FakeControl]
+) -> None:
+    """No traffic is needed: the health monitor sends the half-open probe itself."""
+    rt = gateway.state.router.runtimes["primary"]
+    before = fakes["primary"].calls
+    rt.breaker.force("half_open", "test")
+    for _ in range(40):
+        if rt.breaker.current_state() == "closed":
+            break
+        await asyncio.sleep(0.05)
+    assert rt.breaker.current_state() == "closed"
+    assert fakes["primary"].calls - before == 1  # exactly one probe request
+    assert fakes["primary"].requests[-1]["max_tokens"] == 1
+
+
+async def test_idle_probe_that_fails_reopens_the_breaker(
+    gateway: Gateway, fakes: dict[str, FakeControl]
+) -> None:
+    rt = gateway.state.router.runtimes["primary"]
+    fakes["primary"].status = 503  # the model list still answers; generation fails
+    rt.breaker.force("half_open", "test")
+    for _ in range(40):
+        if rt.breaker.state == "open":
+            break
+        await asyncio.sleep(0.05)
+    assert rt.breaker.state == "open"
+
+
+async def test_probe_failures_right_after_a_host_pause_are_not_counted(
+    gateway: Gateway, fakes: dict[str, FakeControl]
+) -> None:
+    """Laptop sleep makes every probe time out at once: that is the host, not the backends."""
+    monitor = gateway.state.health_monitor
+    rt = gateway.state.router.runtimes["primary"]
+    monitor._last_round = time.time() - 120  # the wall clock jumped: the host was paused
+    await monitor.check_all()
+    fakes["primary"].model = "renamed"  # every probe of the primary now fails
+    await asyncio.sleep(1.5)  # about 7 health rounds inside the grace period
+    assert rt.breaker.state == "closed" and rt.breaker.consecutive_errors == 0

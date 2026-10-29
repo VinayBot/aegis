@@ -52,6 +52,8 @@ WebSocket, the metrics aggregator and the replay recorder.
 | No first token in 15 s + 1 s/1k prompt tokens | timeout: breaker opens at once; failover | `router.route` |
 | Three consecutive errors | breaker opens for 30 s | `breaker.py` |
 | Breaker cool-down over | half-open: exactly one live request probes; success closes, failure re-opens | `breaker.py` |
+| Breaker half-open and no traffic | the health monitor sends that one live request itself (one token), so an idle gateway heals | `health.py` |
+| Host paused (laptop sleep: wall clock jumps past the check interval) | probe failures are not counted for 10 s; they are the host's, not the backends' | `health.py` |
 | Backend process frozen (SIGSTOP) | health probes time out (0.4 s); while it is not streaming, each failed probe is an error, so three probes (about 1.5 s) open the breaker | `health.py` |
 | Backend dies mid-stream | SSE `error` event, tokens estimated (±30%), no cache write | `pipeline._lead` |
 | Redis down | caches skipped, rate limits fall back to an in-process bucket, health "degraded" | `ratelimit.py`, `health.py` |
