@@ -531,5 +531,6 @@ async def events_ws(ws: WebSocket) -> None:
             pass
         finally:
             beat.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            # the heartbeat may have died first on the same closed socket; that is not an error
+            with contextlib.suppress(asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
                 await beat

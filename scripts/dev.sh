@@ -63,7 +63,7 @@ wait_for http://127.0.0.1:5173 "website" 30
 
 say "ready"
 say "  site      http://127.0.0.1:5173"
-say "  gateway   http://127.0.0.1:8000/docs"
+say "  API docs  http://127.0.0.1:8000/api/swagger"
 say "  traces    http://127.0.0.1:16686"
 say "Ctrl-C stops everything this script started."
 wait
