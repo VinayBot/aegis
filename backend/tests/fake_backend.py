@@ -30,10 +30,51 @@ class FakeControl:
     tokens: int = 5
     fail_after: int | None = None  # drop the stream after this many tokens
     text: str = "pong"
+    fail_times: int = 0  # answer 503 to this many calls, then recover (transient blip)
+    # when the request carries `tools`, answer with this tool call, streamed in OpenAI's format
+    tool_call: dict[str, Any] | None = None
     calls: int = 0
     cancelled: int = 0
     completed: int = 0
     requests: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _frame(control: FakeControl, delta: dict[str, Any], finish: str | None = None) -> str:
+    chunk = {
+        "id": "fake",
+        "object": "chat.completion.chunk",
+        "model": control.model,
+        "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+    }
+    return f"data: {json.dumps(chunk)}\n\n"
+
+
+async def _tool_stream(control: FakeControl) -> Any:
+    assert control.tool_call is not None
+    name, args = control.tool_call["name"], json.dumps(control.tool_call["arguments"])
+    yield _frame(
+        control,
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "index": 0,
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": name, "arguments": ""},
+                }
+            ],
+        },
+    )
+    for i in range(0, len(args), 8):  # arguments arrive in fragments, as real servers send them
+        yield _frame(
+            control, {"tool_calls": [{"index": 0, "function": {"arguments": args[i : i + 8]}}]}
+        )
+    yield _frame(control, {}, "tool_calls")
+    usage = {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30}
+    yield f"data: {json.dumps({'id': 'fake', 'choices': [], 'usage': usage})}\n\n"
+    yield "data: [DONE]\n\n"
+    control.completed += 1
 
 
 def build_app(control: FakeControl) -> Starlette:
@@ -48,6 +89,11 @@ def build_app(control: FakeControl) -> Starlette:
             return JSONResponse({"error": {"message": f"model {body.get('model')} not found"}}, 404)
         if control.status != 200:
             return JSONResponse({"error": {"message": "fake failure"}}, control.status)
+        if control.fail_times > 0:
+            control.fail_times -= 1
+            return JSONResponse({"error": {"message": "transient fake failure"}}, 503)
+        if control.tool_call is not None and body.get("tools"):
+            return StreamingResponse(_tool_stream(control), media_type="text/event-stream")
 
         async def stream() -> Any:
             try:

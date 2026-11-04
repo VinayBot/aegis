@@ -137,7 +137,7 @@ export interface Summary extends Omit<RequestRow, "ts"> {
 
 export interface Tenant {
   tenant: string;
-  api_key: string;
+  key_id: string;
   tpm: number;
   budget: { soft: number; hard: number };
   spent_est_usd: number;

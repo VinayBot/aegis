@@ -120,7 +120,7 @@ function Tenants() {
             const soft = r.budget.soft / r.budget.hard;
             const tone = r.spent_est_usd >= r.budget.hard ? "var(--red)" : r.spent_est_usd >= r.budget.soft ? "var(--amber)" : "var(--cyan)";
             return (
-              <tr key={r.api_key} className="text-ink-soft">
+              <tr key={r.key_id} className="text-ink-soft">
                 <td className="py-2 pr-3 text-ink">{r.tenant}</td>
                 <td className="py-2 text-right font-tabular">{fmtInt(r.requests)}</td>
                 <td className="py-2 text-right font-tabular">{fmtInt(r.tokens)}</td>
@@ -148,7 +148,7 @@ function Tenants() {
 export default function ControlRoom() {
   const metrics = useLive((s) => s.metrics);
   const mood = useSystemMood();
-  const [key, setKey] = useState("aegis-demo-key");
+  const [key, setKey] = useState("demo"); // a key id: raw keys never leave the gateway
   const s = metrics?.series;
   const t = (s?.t ?? []) as number[];
   const k = metrics?.kpis;

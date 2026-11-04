@@ -17,6 +17,7 @@ dependencies = [
     { name = "opentelemetry-sdk" },
     { name = "presidio-analyzer" },
     { name = "presidio-anonymizer" },
+    { name = "prometheus-client" },
     { name = "psutil" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -55,6 +56,7 @@ requires-dist = [
     { name = "opentelemetry-sdk", specifier = ">=1.28" },
     { name = "presidio-analyzer", specifier = ">=2.2.355" },
     { name = "presidio-anonymizer", specifier = ">=2.2.355" },
+    { name = "prometheus-client", specifier = ">=0.21" },
     { name = "psutil", specifier = ">=6.1" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.6" },
@@ -1253,6 +1255,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/3d/f5/2172c34da99fd0d1f9b87c8a4ef59cb7ae2286299a34261fa4c7a75ebe9e/presidio_anonymizer-2.2.365.tar.gz", hash = "sha256:6c86dfddf1a3751413be3cbb548255fbd63ed68e71d3082f9c561fd8da6c103e", size = 26886, upload-time = "2026-10-25T19:02:31.378Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/63/78/3501d267a2be349bbcf4fc1917c67a7fc4fa8d98c273af2bbf0411d9af93/presidio_anonymizer-2.2.365-py3-none-any.whl", hash = "sha256:d79ce6a716c3779d030fdaa941e8dbc2045b1e8ec96b09ef18b410a26fd64fd1", size = 39088, upload-time = "2026-10-25T19:02:29.763Z" },
+]
+
+[[package]]
+name = "prometheus-client"
+version = "0.26.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/52/73/f1334c29c2af4cd9dba6c7817e61b611bd0215e2eb5565c6064a4de18802/prometheus_client-0.26.0.tar.gz", hash = "sha256:04a91bcf94e2cf74a44a1a874d651a2e853ed354b6e822f3b7487751465d5c2b", size = 92910, upload-time = "2026-07-24T19:36:41.893Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/eb/a3/b69efbf4143b5b9859b977770bbbabcc2796b702fa69dc40271e45cd5a56/prometheus_client-0.26.0-py3-none-any.whl", hash = "sha256:fa93d06737aa02bacd05794768508bb97d2fbee28cb3bca04eaae92f0ca953d6", size = 64494, upload-time = "2026-07-24T19:36:40.854Z" },
 ]
 
 [[package]]

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -14,6 +16,14 @@ PROJECT_DIR = BACKEND_DIR.parent
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AEGIS_", env_file=".env", extra="ignore")
 
+    # Secure by default: "production" unless the environment says otherwise. Production requires an
+    # admin key for every control-plane call and refuses chaos. `scripts/dev.sh` sets dev, where a
+    # caller on this machine (loopback) is the local operator, so the demo site needs no key.
+    env: Literal["dev", "production"] = "production"
+    # Admin credential from the environment (a secret store in production), never from the YAML.
+    admin_key: SecretStr | None = None
+    log_format: Literal["json", "text"] = "json"
+    log_level: str = "INFO"
     config_path: Path = BACKEND_DIR / "config" / "gateway.yaml"
     redis_url: str = "redis://127.0.0.1:6379/0"
     redis_prefix: str = "aegis"
@@ -32,6 +42,15 @@ class Settings(BaseSettings):
     embedder_model: str = "BAAI/bge-small-en-v1.5"
     health_interval_seconds: float = 0.5
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    # Langfuse (cloud or self-hosted v3+): traces are also sent to its OTLP endpoint when both
+    # keys are set. Jaeger keeps receiving the same spans.
+    langfuse_host: str = "https://cloud.langfuse.com"
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: SecretStr | None = None
+
+    @property
+    def is_dev(self) -> bool:
+        return self.env == "dev"
 
 
 @lru_cache(maxsize=1)

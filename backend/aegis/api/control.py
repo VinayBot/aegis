@@ -10,15 +10,20 @@ import time
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from aegis import architecture, assistant, scenarios
+from aegis import architecture, assistant, scenarios, telemetry
+from aegis.security import Principal, require_admin, require_viewer, websocket_principal
 from aegis.state import AppState
 
+# Access levels (see aegis/security.py): routes without a dependency are public (health, docs,
+# the scenario list); VIEWER routes scope every row to the caller's tenant unless the caller is an
+# admin; ADMIN routes see or change the whole gateway.
 router = APIRouter(prefix="/api")
 ws_router = APIRouter()
+ADMIN = Depends(require_admin)
 
 
 def _state(request: Request) -> AppState:
@@ -41,18 +46,22 @@ async def health(request: Request) -> dict[str, Any]:
         "uptime_s": round(time.time() - s.started_at, 1),
         "redis_ok": s.redis_ok,
         "chaos_enabled": s.chaos.enabled,
+        "env": s.settings.env,
+        "trace_exporters": list(telemetry.exporters),
         "components": components,
     }
 
 
 @router.get(
-    "/architecture", summary="Live topology: nodes, edges, status, config, latency, counters"
+    "/architecture",
+    dependencies=[ADMIN],
+    summary="Live topology: nodes, edges, status, config, latency, counters",
 )
 async def get_architecture(request: Request) -> dict[str, Any]:
     return architecture.build(_state(request))
 
 
-@router.get("/metrics", summary="Time series for the dashboard")
+@router.get("/metrics", dependencies=[ADMIN], summary="Time series for the dashboard")
 async def metrics(request: Request, window: int = 300, step: int = 5) -> dict[str, Any]:
     s = _state(request)
     window = max(30, min(window, 900))
@@ -69,23 +78,27 @@ async def metrics(request: Request, window: int = 300, step: int = 5) -> dict[st
     }
     out["totals"] = await s.ledger.totals()
     out["tokens_per_min_by_key"] = s.metrics.tokens_per_min_by_key()
-    out["limits"] = {k: {"tenant": v.tenant, "tpm": v.tpm} for k, v in s.config.get().keys.items()}
+    out["limits"] = {v.id: {"tenant": v.tenant, "tpm": v.tpm} for v in s.config.get().keys.values()}
     out["server_time"] = time.time()
     return out
 
 
 @router.get("/tenants", summary="Per-tenant usage this month with budgets")
-async def tenants(request: Request) -> list[dict[str, Any]]:
+async def tenants(
+    request: Request, principal: Principal = Depends(require_viewer)
+) -> list[dict[str, Any]]:
     s = _state(request)
     cfg = s.config.get()
     rows = {r["tenant"]: r for r in await s.ledger.tenants()}
     out = []
-    for key, k in cfg.keys.items():
+    for k in cfg.keys.values():
+        if not principal.can_see(k.tenant):
+            continue
         r = rows.get(k.tenant, {})
         out.append(
             {
                 "tenant": k.tenant,
-                "api_key": key,
+                "key_id": k.id,
                 "tpm": k.tpm,
                 "budget": k.budget.model_dump(),
                 "spent_est_usd": round(await s.budgets.spent(k.tenant, s.redis_ok), 8),
@@ -100,13 +113,18 @@ async def tenants(request: Request) -> list[dict[str, Any]]:
 
 
 @router.get("/requests", summary="Most recent requests (live feed)")
-async def recent_requests(request: Request, limit: int = 50) -> list[dict[str, Any]]:
+async def recent_requests(
+    request: Request, limit: int = 50, principal: Principal = Depends(require_viewer)
+) -> list[dict[str, Any]]:
     s = _state(request)
-    live = list(s.metrics.recent_requests)[:limit]
+    limit = max(1, min(limit, 500))
+    tenant = None if principal.is_admin else principal.tenant
+    live = [r for r in s.metrics.recent_requests if tenant is None or r.get("tenant") == tenant]
+    live = live[:limit]
     if len(live) >= limit:
         return live
     seen = {r["request_id"] for r in live}
-    rows = await s.ledger.recent(limit)
+    rows = await s.ledger.recent(limit, tenant=tenant)
     for row in rows:
         if row["id"] not in seen:
             live.append({**row, "request_id": row["id"]})
@@ -114,9 +132,15 @@ async def recent_requests(request: Request, limit: int = 50) -> list[dict[str, A
 
 
 @router.get("/requests/{request_id}", summary="One request: its ledger row and lifecycle events")
-async def request_detail(request: Request, request_id: str) -> dict[str, Any]:
+async def request_detail(
+    request: Request, request_id: str, principal: Principal = Depends(require_viewer)
+) -> dict[str, Any]:
     s = _state(request)
-    row = await s.ledger.get(request_id)
+    tenant = None if principal.is_admin else principal.tenant
+    row = await s.ledger.get(request_id, tenant=tenant)
+    # lifecycle events carry no tenant; a tenant only sees them once its own row proves ownership
+    if row is None and tenant is not None:
+        raise HTTPException(404, "unknown request id")
     events = [e for e in s.bus.recent if e.get("request_id") == request_id]
     if row is None and not events:
         raise HTTPException(404, "unknown request id")
@@ -127,7 +151,11 @@ async def request_detail(request: Request, request_id: str) -> dict[str, Any]:
     }
 
 
-@router.get("/events/recent", summary="Recent lifecycle events (also used by the replay recorder)")
+@router.get(
+    "/events/recent",
+    dependencies=[ADMIN],
+    summary="Recent lifecycle events (also used by the replay recorder)",
+)
 async def recent_events(request: Request, limit: int = 300) -> list[dict[str, Any]]:
     return list(_state(request).bus.recent)[-limit:]
 
@@ -142,12 +170,16 @@ class ChaosAction(BaseModel):
     revert_after_s: float | None = None
 
 
-@router.get("/chaos", summary="Chaos state and action log")
+@router.get("/chaos", dependencies=[ADMIN], summary="Chaos state and action log")
 async def chaos_state(request: Request) -> dict[str, Any]:
     return _state(request).chaos.snapshot()
 
 
-@router.post("/chaos", summary="Inject latency or errors, or kill/revive a backend (dev only)")
+@router.post(
+    "/chaos",
+    dependencies=[ADMIN],
+    summary="Inject latency or errors, or kill/revive a backend (dev only)",
+)
 async def chaos_apply(request: Request, action: ChaosAction) -> dict[str, Any]:
     s = _state(request)
     cfg = s.config.get()
@@ -168,7 +200,7 @@ async def chaos_apply(request: Request, action: ChaosAction) -> dict[str, Any]:
     return {"applied": entry, "state": s.chaos.snapshot()}
 
 
-@router.post("/chaos/revert", summary="Revert every active fault")
+@router.post("/chaos/revert", dependencies=[ADMIN], summary="Revert every active fault")
 async def chaos_revert(request: Request) -> dict[str, Any]:
     s = _state(request)
     if not s.chaos.enabled:
@@ -177,7 +209,9 @@ async def chaos_revert(request: Request) -> dict[str, Any]:
     return s.chaos.snapshot()
 
 
-@router.post("/breakers/{backend}/reset", summary="Close a breaker by hand (dev only)")
+@router.post(
+    "/breakers/{backend}/reset", dependencies=[ADMIN], summary="Close a breaker by hand (dev only)"
+)
 async def breaker_reset(request: Request, backend: str) -> dict[str, Any]:
     s = _state(request)
     if not s.chaos.enabled:
@@ -194,7 +228,11 @@ async def scenario_list(request: Request) -> list[dict[str, Any]]:
     return request.app.state.scenarios.list()
 
 
-@router.post("/scenarios/{name}", summary="Start a guided scenario; progress streams as events")
+@router.post(
+    "/scenarios/{name}",
+    dependencies=[ADMIN],
+    summary="Start a guided scenario; progress streams as events",
+)
 async def scenario_start(request: Request, name: str) -> dict[str, Any]:
     s = _state(request)
     if not s.chaos.enabled and name in ("primary_crash", "slow_primary"):
@@ -223,13 +261,21 @@ class LoadTest(BaseModel):
     no_cache: bool | None = None
 
 
-@router.post("/playground/burst", summary="N concurrent requests (distinct prompts by default)")
+@router.post(
+    "/playground/burst",
+    dependencies=[ADMIN],
+    summary="N concurrent requests (distinct prompts by default)",
+)
 async def pg_burst(request: Request, body: LoadTest) -> dict[str, Any]:
     results = await scenarios.burst(_state(request), body.n, body.distinct, body.prompt)
     return {"results": results}
 
 
-@router.post("/playground/duplicate", summary="N identical concurrent requests (coalescing test)")
+@router.post(
+    "/playground/duplicate",
+    dependencies=[ADMIN],
+    summary="N identical concurrent requests (coalescing test)",
+)
 async def pg_duplicate(request: Request, body: LoadTest) -> dict[str, Any]:
     return {
         "results": await scenarios.duplicate(
@@ -244,12 +290,20 @@ async def pg_duplicate(request: Request, body: LoadTest) -> dict[str, Any]:
     }
 
 
-@router.post("/playground/flood", summary="Rapid requests on the low-limit key (429 test)")
+@router.post(
+    "/playground/flood",
+    dependencies=[ADMIN],
+    summary="Rapid requests on the low-limit key (429 test)",
+)
 async def pg_flood(request: Request, body: LoadTest) -> dict[str, Any]:
     return {"results": await scenarios.flood(_state(request), min(body.n, 20))}
 
 
-@router.post("/selfcheck", summary="End-to-end probe: embed, cache lookup, 1-token generation")
+@router.post(
+    "/selfcheck",
+    dependencies=[ADMIN],
+    summary="End-to-end probe: embed, cache lookup, 1-token generation",
+)
 async def selfcheck(request: Request) -> dict[str, Any]:
     s = _state(request)
     out: dict[str, Any] = {"ts": time.time(), "stages": []}
@@ -301,18 +355,20 @@ class Tune(BaseModel):
     semantic_threshold: float | None = Field(None, ge=0.5, le=1.0)
 
 
-@router.get("/config", summary="The effective gateway configuration")
+@router.get("/config", dependencies=[ADMIN], summary="The effective gateway configuration")
 async def config(request: Request) -> dict[str, Any]:
     s = _state(request)
     return {
-        "config": s.config.get().model_dump(),
+        "config": s.config.get().public_view(),
         "path": str(s.config.path),
         "reloads": s.config.reloads,
         "error": s.config.last_error,
     }
 
 
-@router.post("/cache/tune", summary="Adjust the semantic threshold at runtime")
+@router.post(
+    "/cache/tune", dependencies=[ADMIN], summary="Adjust the semantic threshold at runtime"
+)
 async def cache_tune(request: Request, body: Tune) -> dict[str, Any]:
     s = _state(request)
     cfg = s.config.get()
@@ -324,12 +380,12 @@ async def cache_tune(request: Request, body: Tune) -> dict[str, Any]:
     return {"cache": cfg.cache.model_dump()}
 
 
-@router.get("/cache/stats", summary="Cache sizes")
+@router.get("/cache/stats", dependencies=[ADMIN], summary="Cache sizes")
 async def cache_stats(request: Request) -> dict[str, Any]:
     return await _state(request).cache.stats()
 
 
-@router.post("/cache/flush", summary="Empty both caches (dev)")
+@router.post("/cache/flush", dependencies=[ADMIN], summary="Empty both caches (dev)")
 async def cache_flush(request: Request) -> dict[str, Any]:
     s = _state(request)
     removed = await s.cache.flush()
@@ -337,7 +393,9 @@ async def cache_flush(request: Request) -> dict[str, Any]:
     return {"removed": removed}
 
 
-@router.post("/budgets/{tenant}/reset", summary="Reset a tenant's monthly spend (dev)")
+@router.post(
+    "/budgets/{tenant}/reset", dependencies=[ADMIN], summary="Reset a tenant's monthly spend (dev)"
+)
 async def budget_reset(request: Request, tenant: str) -> dict[str, Any]:
     await _state(request).budgets.reset(tenant)
     return {"tenant": tenant, "spent": 0}
@@ -388,7 +446,7 @@ def _trace_view(trace: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@router.get("/traces", summary="Recent traces from Jaeger's query API")
+@router.get("/traces", dependencies=[ADMIN], summary="Recent traces from Jaeger's query API")
 async def traces(
     request: Request, limit: int = 30, outcome: str | None = None, lookback: str = "1h"
 ) -> dict[str, Any]:
@@ -414,7 +472,7 @@ async def traces(
     return {"traces": views, "jaeger_ui": s.settings.jaeger_ui_url}
 
 
-@router.get("/traces/{trace_id}", summary="One trace as a waterfall")
+@router.get("/traces/{trace_id}", dependencies=[ADMIN], summary="One trace as a waterfall")
 async def trace(request: Request, trace_id: str) -> dict[str, Any]:
     s = _state(request)
     try:
@@ -482,12 +540,14 @@ async def doc(request: Request, slug: str) -> dict[str, Any]:
 
 class AskBody(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
-    history: list[dict[str, str]] = Field(default_factory=list)
+    history: list[dict[str, str]] = Field(default_factory=list, max_length=20)
     no_cache: bool = False
 
 
 @router.post(
-    "/assistant/chat", summary="Ask AEGIS about the project (SSE); routed through the gateway"
+    "/assistant/chat",
+    dependencies=[ADMIN],  # its live context spans every tenant
+    summary="Ask AEGIS about the project (SSE); routed through the gateway",
 )
 async def assistant_chat(request: Request, body: AskBody) -> StreamingResponse:
     s = _state(request)
@@ -510,6 +570,13 @@ async def assistant_chat(request: Request, body: AskBody) -> StreamingResponse:
 
 @ws_router.websocket("/ws/events")
 async def events_ws(ws: WebSocket) -> None:
+    """Every lifecycle event, live. Three tasks race: send events, send heartbeats, and receive.
+    Whichever ends first (normally the receiver seeing the client or the server close the
+    socket) cancels the others, so a closed socket is noticed at once, even when no event is
+    flowing, and a shutting-down server is never held open by an idle dashboard."""
+    if websocket_principal(ws) is None:
+        await ws.close(code=1008, reason="admin key required")  # policy violation
+        return
     await ws.accept()
     s: AppState = ws.app.state.state
     async with s.bus.subscribe() as queue:
@@ -517,20 +584,29 @@ async def events_ws(ws: WebSocket) -> None:
             {"type": "hello", "server_time": time.time(), "recent": list(s.bus.recent)[-150:]}
         )
 
+        async def send_events() -> None:
+            while True:
+                await ws.send_json(await queue.get())
+
         async def heartbeat() -> None:
             while True:
                 await asyncio.sleep(3)
                 await ws.send_json({"type": "heartbeat", "ts": time.time()})
 
-        beat = asyncio.get_running_loop().create_task(heartbeat())
+        async def receive() -> None:
+            while True:  # clients send nothing meaningful; this only watches for the close
+                if (await ws.receive())["type"] == "websocket.disconnect":
+                    return
+
+        tasks = [asyncio.ensure_future(t()) for t in (send_events, heartbeat, receive)]
         try:
-            while True:
-                event = await queue.get()
-                await ws.send_json(event)
-        except (WebSocketDisconnect, RuntimeError):
-            pass
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         finally:
-            beat.cancel()
-            # the heartbeat may have died first on the same closed socket; that is not an error
-            with contextlib.suppress(asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
-                await beat
+            for t in tasks:
+                t.cancel()
+            for t in tasks:
+                # a send on the closed socket ends with an error; that is the expected way out
+                with contextlib.suppress(
+                    asyncio.CancelledError, WebSocketDisconnect, RuntimeError, Exception
+                ):
+                    await t

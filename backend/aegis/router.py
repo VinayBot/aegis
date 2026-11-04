@@ -149,7 +149,8 @@ class Routed:
 def is_first_token(chunk: dict[str, Any]) -> bool:
     for choice in chunk.get("choices") or []:
         delta = choice.get("delta") or {}
-        if delta.get("content") or choice.get("finish_reason"):
+        # a tool call is the model's first output just as text is
+        if delta.get("content") or delta.get("tool_calls") or choice.get("finish_reason"):
             return True
     return False
 

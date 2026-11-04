@@ -12,13 +12,13 @@ import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from redis.asyncio import Redis
 
-from aegis import __version__, guardrails, telemetry
+from aegis import __version__, guardrails, logcontext, security, telemetry
 from aegis.api import control, gateway
 from aegis.assistant import DocsIndex
 from aegis.budget import Budgets
@@ -32,6 +32,7 @@ from aegis.health import HealthMonitor
 from aegis.ledger import Ledger
 from aegis.metrics import Metrics
 from aegis.pipeline import Pipeline
+from aegis.prom import CONTENT_TYPE_LATEST, PromMetrics
 from aegis.ratelimit import RateLimiter
 from aegis.router import Router
 from aegis.scenarios import ScenarioRunner
@@ -84,20 +85,39 @@ def build_state(settings: Settings) -> AppState:
     )
 
 
+def _harden(settings: Settings) -> Settings:
+    """Production refuses dev-only behaviour even if it was switched on by mistake."""
+    if not settings.is_dev and settings.chaos_enabled:
+        log.error("AEGIS_CHAOS_ENABLED ignored: fault injection is dev-only (AEGIS_ENV=dev)")
+        settings = settings.model_copy(update={"chaos_enabled": False})
+    return settings
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
-    settings = settings or get_settings()
+    settings = _harden(settings or get_settings())
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        logging.basicConfig(
-            level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
-        )
-        logging.getLogger("httpx").setLevel(logging.WARNING)  # probes run twice a second
-        logging.getLogger("presidio-analyzer").setLevel(logging.ERROR)
+        logcontext.setup(settings.log_format, settings.log_level)
         telemetry.setup_tracing(
-            settings.service_name, settings.otlp_endpoint if settings.tracing_enabled else None
+            settings.service_name,
+            settings.otlp_endpoint if settings.tracing_enabled else None,
+            langfuse=telemetry.langfuse_target(settings) if settings.tracing_enabled else None,
         )
         state = build_state(settings)
+        cfg = state.config.get()
+        plaintext = security.plaintext_keys(cfg)
+        if plaintext and not settings.is_dev:
+            log.warning(
+                "plaintext API keys in the gateway YAML; store them as sha256: entries",
+                extra={"key_ids": plaintext},
+            )
+        # ledgers from before key ids hold raw keys: replace them with the public ids
+        state.ledger.remap_key_ids(
+            {entry: k.id for entry, k in cfg.keys.items() if not entry.startswith("sha256:")}
+        )
+        prom = PromMetrics(state.bus)
+        state.prom = prom  # type: ignore[attr-defined]
         app.state.state = state
         app.state.pipeline = Pipeline(state)
         app.state.scenarios = ScenarioRunner(state)
@@ -109,6 +129,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         state.ledger.start()
         state.metrics.start()
+        prom.start()
         state.recorder.start()
         monitor = HealthMonitor(state)
         state.health_monitor = monitor  # type: ignore[attr-defined]
@@ -120,6 +141,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await asyncio.to_thread(docs.build, app.openapi())
         if settings.chaos_enabled:
             log.warning("CHAOS ENABLED: fault injection endpoints are live (dev only)")
+        if settings.is_dev:
+            log.warning("AEGIS_ENV=dev: loopback callers act as the local operator (admin)")
         log.info(
             "AEGIS %s ready: %d backends, %d doc chunks",
             __version__,
@@ -133,6 +156,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             system_events.cancel()
             await monitor.stop()
             await state.metrics.stop()
+            await prom.stop()
             await state.recorder.stop()
             await state.ledger.stop()
             await state.router.aclose()
@@ -174,6 +198,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(gateway.router)
     app.include_router(control.router)
     app.include_router(control.ws_router)
+
+    # ---- probes and metrics (the site's catch-all route below must not shadow them)
+    @app.get("/healthz", summary="Liveness: the process and its event loop respond", tags=["ops"])
+    async def healthz() -> dict[str, object]:
+        return {"status": "alive", "version": __version__}
+
+    @app.get(
+        "/readyz",
+        summary="Readiness: config loaded and at least one backend can serve",
+        tags=["ops"],
+        responses={503: {"description": "not ready: no backend can serve"}},
+    )
+    async def readyz(request: Request) -> JSONResponse:
+        state: AppState = request.app.state.state
+        backends = {
+            n.split(":", 1)[1]: c["ok"] for n, c in state.health.items() if n.startswith("backend:")
+        }
+        usable = [
+            n
+            for n, ok in backends.items()
+            if ok
+            and n in state.router.runtimes
+            and state.router.runtimes[n].breaker.current_state() != "open"
+        ]
+        ready = bool(usable) and state.config.last_error is None
+        body = {
+            "status": "ready" if ready else "not_ready",
+            "usable_backends": usable,
+            "redis": "ok" if state.redis_ok else "degraded (caches skipped, local rate limits)",
+            "config_error": state.config.last_error,
+        }
+        return JSONResponse(body, 200 if ready else 503)
+
+    @app.get(
+        "/metrics",
+        summary="Prometheus metrics (text exposition format)",
+        tags=["ops"],
+        dependencies=[Depends(security.require_admin)],
+        response_class=Response,
+    )
+    async def prometheus(request: Request) -> Response:
+        state: AppState = request.app.state.state
+        body = state.prom.render(state.router.runtimes)  # type: ignore[attr-defined]
+        return Response(body, media_type=CONTENT_TYPE_LATEST)
 
     @app.exception_handler(Exception)
     async def unhandled(_: Request, exc: Exception) -> JSONResponse:

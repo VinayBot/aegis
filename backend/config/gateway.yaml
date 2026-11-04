@@ -56,13 +56,25 @@ models:
     chain: [litellm-ollama, ollama-llama]
     price: {input_per_1m: 0.15, output_per_1m: 0.60, reference: gpt-4o-mini list price}
 
+# API keys. `id` is the public name used in logs, metrics, the ledger and the API; the key itself
+# never leaves the auth check. These are local demo keys, readable on purpose. In production store
+# each key as its hash (`uv run python -m aegis.security hash <key>` prints the entry), e.g.
+#   "sha256:9f86d0...":  {id: acme, tenant: acme, tpm: 60000, budget: {soft: 50, hard: 100}}
+# `role: admin` grants the control plane; the admin credential normally comes from AEGIS_ADMIN_KEY.
 keys:
-  aegis-demo-key:      {tenant: demo,        tpm: 30000, budget: {soft: 0.50, hard: 1.00}}
-  aegis-assistant-key: {tenant: aegis-bot,   tpm: 60000, budget: {soft: 0.50, hard: 1.00}}
-  aegis-flood-key:     {tenant: flood-test,  tpm: 1500,  budget: {soft: 0.50, hard: 1.00}}
-  aegis-budget-key:    {tenant: budget-test, tpm: 30000, budget: {soft: 0.0002, hard: 0.0006}}
-  veritas-key:         {tenant: veritas,     tpm: 30000, budget: {soft: 2.00, hard: 5.00}}
-  nexus-key:           {tenant: nexus,       tpm: 30000, budget: {soft: 2.00, hard: 5.00}}
+  aegis-demo-key:      {id: demo,      tenant: demo,        tpm: 30000, budget: {soft: 0.50, hard: 1.00}}
+  aegis-assistant-key: {id: assistant, tenant: aegis-bot,   tpm: 60000, budget: {soft: 0.50, hard: 1.00}}
+  aegis-flood-key:     {id: flood,     tenant: flood-test,  tpm: 1500,  budget: {soft: 0.50, hard: 1.00}}
+  aegis-budget-key:    {id: budget,    tenant: budget-test, tpm: 30000, budget: {soft: 0.0002, hard: 0.0006}}
+  veritas-key:         {id: veritas,   tenant: veritas,     tpm: 30000, budget: {soft: 2.00, hard: 5.00}}
+  nexus-key:           {id: nexus,     tenant: nexus,       tpm: 30000, budget: {soft: 2.00, hard: 5.00}}
+
+# Hard input bounds, checked before guardrails, caches or models (413 / 400 with a clear code).
+limits:
+  max_body_bytes: 1000000
+  max_messages: 256
+  max_prompt_tokens: 16000
+  max_output_tokens: 4096
 
 cache:
   ttl_seconds: 86400
@@ -76,6 +88,9 @@ router:
   first_token_timeout_seconds: 15    # plus 1 s per 1k prompt tokens
   hedge_min_ms: 250                  # never hedge sooner than this
   hedge_default_ms: 2500             # hedge delay before a backend has enough TTFT samples
+  chain_retries: 1                   # whole chain failed before a token: retry it once...
+  retry_base_ms: 200                 # ...after a full-jitter exponential backoff (0..base*2^n ms)
+  retry_cap_ms: 2000
 
 breaker:
   error_threshold: 3                 # consecutive errors that open the breaker

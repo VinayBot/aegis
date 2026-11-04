@@ -6,6 +6,7 @@ can be edited while the gateway runs.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any, Literal
 
@@ -48,6 +49,20 @@ class KeyConfig(BaseModel):
     tenant: str
     tpm: int
     budget: Budget
+    # tenant: the data plane and read access to its own tenant's requests. admin: the control
+    # plane too (chaos, cache, budgets, every tenant's data).
+    role: Literal["tenant", "admin"] = "tenant"
+    # Public identifier, safe to log, store and show. Raw keys never leave aegis.security.
+    id: str = ""
+
+
+class LimitsConfig(BaseModel):
+    """Hard input bounds, checked before any guardrail, cache or model sees the request."""
+
+    max_body_bytes: int = 1_000_000
+    max_messages: int = 256
+    max_prompt_tokens: int = 16_000
+    max_output_tokens: int = 4096
 
 
 class CacheConfig(BaseModel):
@@ -63,6 +78,11 @@ class RouterConfig(BaseModel):
     first_token_timeout_seconds: float = 15.0
     hedge_min_ms: float = 250.0
     hedge_default_ms: float = 2500.0
+    # When every backend in the chain fails before the first token, try the chain again after an
+    # exponential backoff with full jitter (AWS style), never past the queue deadline.
+    chain_retries: int = 1
+    retry_base_ms: float = 200.0
+    retry_cap_ms: float = 2000.0
 
 
 class BreakerConfig(BaseModel):
@@ -82,6 +102,7 @@ class GatewayConfig(BaseModel):
     router: RouterConfig = Field(default_factory=RouterConfig)
     breaker: BreakerConfig = Field(default_factory=BreakerConfig)
     chaos: ChaosConfig = Field(default_factory=ChaosConfig)
+    limits: LimitsConfig = Field(default_factory=LimitsConfig)
 
     def model_post_init(self, _: Any) -> None:
         for name, backend in self.backends.items():
@@ -92,6 +113,27 @@ class GatewayConfig(BaseModel):
             unknown = [b for b in model.chain if b not in self.backends]
             if unknown:
                 raise ValueError(f"model {name!r} chains unknown backend(s): {unknown}")
+        seen: set[str] = set()
+        for entry, key in self.keys.items():
+            if not key.id:
+                raw = (
+                    entry[7:]
+                    if entry.startswith("sha256:")
+                    else hashlib.sha256(entry.encode()).hexdigest()
+                )
+                key.id = f"key_{raw[:10]}"
+            if key.id in seen:
+                raise ValueError(f"duplicate key id {key.id!r}")
+            seen.add(key.id)
+
+    def public_view(self) -> dict[str, Any]:
+        """The config without secrets: keys appear by id, backend credentials are masked."""
+        data = self.model_dump()
+        data["keys"] = {k.id: {**k.model_dump(), "id": k.id} for k in self.keys.values()}
+        for backend in data["backends"].values():
+            if backend.get("api_key"):
+                backend["api_key"] = "***"
+        return data
 
     def effective_params(self, model: str, request: dict[str, Any]) -> dict[str, Any]:
         """The sampling parameters the request will actually run with: what the client sent,
@@ -108,6 +150,12 @@ class GatewayConfig(BaseModel):
             "seed",
             "presence_penalty",
             "frequency_penalty",
+            # native tool calling and structured output pass through to the backend, and are part
+            # of the cache key: the same question with different tools is a different request
+            "tools",
+            "tool_choice",
+            "parallel_tool_calls",
+            "response_format",
         ):
             value = request.get(key)
             if value is None:

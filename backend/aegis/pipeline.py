@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -24,15 +25,24 @@ from typing import Any
 
 from opentelemetry.trace import Span
 
-from aegis import guardrails, telemetry
+from aegis import guardrails, logcontext, security, telemetry
 from aegis.cache import CachedCompletion, CacheKeys, build_keys
 from aegis.coalesce import Flight
-from aegis.config import GatewayConfig, Price
+from aegis.config import GatewayConfig, KeyConfig, Price
+from aegis.retry import full_jitter
 from aegis.router import MidStreamError, NoBackendAvailable, Routed, UpstreamClientError
 from aegis.state import AppState
-from aegis.tokens import ESTIMATE_MARGIN, estimate_messages, estimate_text, message_text
+from aegis.tokens import (
+    ESTIMATE_MARGIN,
+    estimate_messages,
+    estimate_text,
+    estimate_tools,
+    message_text,
+)
 
+request_log = logging.getLogger("aegis.request")
 COST_LABEL = "est. cloud equivalent"
+ROLES = frozenset({"system", "developer", "user", "assistant", "tool"})
 
 
 class GatewayError(Exception):
@@ -65,7 +75,8 @@ class RequestContext:
     root: Span
     trace_id: str
     started: float
-    api_key: str = ""
+    key_id: str = ""
+    key_cfg: KeyConfig | None = None
     tenant: str = "?"
     tpm: int = 0
     params: dict[str, Any] = field(default_factory=dict)
@@ -88,6 +99,10 @@ class Prepared:
 
 def price_of(price: Price, tokens_in: int, tokens_out: int) -> float:
     return tokens_in * price.input_per_1m / 1e6 + tokens_out * price.output_per_1m / 1e6
+
+
+def _has_tool_calls(chunk: dict[str, Any]) -> bool:
+    return any((c.get("delta") or {}).get("tool_calls") for c in chunk.get("choices") or [])
 
 
 def _delta_content(chunk: dict[str, Any]) -> tuple[str, str | None]:
@@ -175,6 +190,7 @@ class Pipeline:
             started=time.perf_counter(),
         )
         ctx.trace_id = telemetry.trace_id_of(ctx.root)
+        logcontext.bind(request_id=ctx.id, trace_id=ctx.trace_id)
         ctx.root.set_attributes(
             {"aegis.request_id": ctx.id, "aegis.client": client, "aegis.no_cache": no_cache}
         )
@@ -238,15 +254,24 @@ class Pipeline:
         s = self.s
         # -- auth
         async with self._stage(ctx, "auth") as rec:
-            key_cfg = cfg.keys.get(api_key or "")
+            key_cfg = security.resolve_key(cfg, api_key)
             if key_cfg is None:
                 rec["outcome"] = "rejected"
                 raise GatewayError(
                     401, "invalid_api_key", "Unknown or missing API key.", outcome="rejected"
                 )
-            ctx.api_key, ctx.tenant, ctx.tpm = api_key or "", key_cfg.tenant, key_cfg.tpm
-            rec["data"]["tenant"] = ctx.tenant
-        ctx.root.set_attribute("aegis.tenant", ctx.tenant)
+            ctx.key_id, ctx.key_cfg = key_cfg.id, key_cfg
+            ctx.tenant, ctx.tpm = key_cfg.tenant, key_cfg.tpm
+            rec["data"].update(tenant=ctx.tenant, key_id=ctx.key_id)
+        logcontext.bind(tenant=ctx.tenant)
+        ctx.root.set_attributes(
+            {
+                "aegis.tenant": ctx.tenant,
+                "aegis.key_id": ctx.key_id,
+                "langfuse.user.id": ctx.tenant,
+                "langfuse.trace.tags": [ctx.model, ctx.client],
+            }
+        )
         s.bus.publish("request.meta", ctx.id, tenant=ctx.tenant, preview=preview)
 
         if ctx.model not in cfg.models:
@@ -262,6 +287,7 @@ class Pipeline:
             or not all(isinstance(m, dict) for m in messages)
         ):
             raise GatewayError(400, "invalid_request", "`messages` must be a non-empty list.")
+        self._check_limits(cfg, body, messages)
 
         # -- guardrails: PII redaction + prompt-injection check
         async with self._stage(ctx, "guardrails") as rec:
@@ -291,12 +317,14 @@ class Pipeline:
                     preview=message_text(outcome.messages[-1])[:160],
                 )
         ctx.params = cfg.effective_params(ctx.model, body)
-        ctx.prompt_tokens_est = estimate_messages(ctx.messages)
+        ctx.prompt_tokens_est = estimate_messages(ctx.messages) + estimate_tools(
+            ctx.params.get("tools")
+        )
 
         # -- rate limit (tokens per minute, per key)
         reserve = ctx.prompt_tokens_est + int(ctx.params.get("max_tokens") or 512)
         async with self._stage(ctx, "ratelimit") as rec:
-            decision = await s.limiter.take(ctx.api_key, ctx.tpm, reserve, s.redis_ok)
+            decision = await s.limiter.take(ctx.key_id, ctx.tpm, reserve, s.redis_ok)
             rec["data"].update(
                 reserved=reserve, tokens_left=int(decision.tokens_left), store=decision.backend
             )
@@ -321,7 +349,8 @@ class Pipeline:
         ctx.reserved = reserve
 
         # -- budget (est. cloud-equivalent USD per tenant per month)
-        key_cfg = cfg.keys[ctx.api_key]
+        key_cfg = ctx.key_cfg
+        assert key_cfg is not None
         async with self._stage(ctx, "budget") as rec:
             status = await s.budgets.status(
                 ctx.tenant, key_cfg.budget.soft, key_cfg.budget.hard, s.redis_ok
@@ -435,15 +464,7 @@ class Pipeline:
         # -- router (+ hedger) -> backend
         try:
             async with self._stage(ctx, "router") as rec:
-                routed = await s.router.route(
-                    config=cfg,
-                    model=ctx.model,
-                    payload={"messages": ctx.messages, **ctx.params},
-                    params=ctx.params,
-                    root=ctx.root,
-                    prompt_tokens=ctx.prompt_tokens_est,
-                    request_id=ctx.id,
-                )
+                routed = await self._route_with_retry(ctx, cfg, rec)
                 rec["data"].update(
                     backend=routed.attempt.rt.name,
                     ttft_ms=round(routed.ttft_ms, 1),
@@ -486,6 +507,83 @@ class Pipeline:
         )
         return Prepared(200, headers, events=self._lead(ctx, cfg, routed, flight, keys, vector))
 
+    def _check_limits(
+        self, cfg: GatewayConfig, body: dict[str, Any], messages: list[dict[str, Any]]
+    ) -> None:
+        """Hard input bounds: cheap checks that run before any guardrail, cache or model."""
+        lim = cfg.limits
+        if len(messages) > lim.max_messages:
+            raise GatewayError(
+                400,
+                "too_many_messages",
+                f"{len(messages)} messages; the limit is {lim.max_messages}.",
+                outcome="rejected",
+            )
+        bad = sorted({str(m.get("role")) for m in messages if m.get("role") not in ROLES})
+        if bad:
+            raise GatewayError(400, "invalid_request", f"Unknown message role(s): {bad}.")
+        for field_name in ("max_tokens", "max_completion_tokens"):
+            value = body.get(field_name)
+            if value is None:
+                continue
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise GatewayError(
+                    400, "invalid_request", f"`{field_name}` must be a positive integer."
+                )
+            if value > lim.max_output_tokens:
+                raise GatewayError(
+                    400,
+                    "max_tokens_too_large",
+                    f"`{field_name}` {value} is over this gateway's limit of "
+                    f"{lim.max_output_tokens}.",
+                    outcome="rejected",
+                )
+        tokens = estimate_messages(messages) + estimate_tools(body.get("tools"))
+        if tokens > lim.max_prompt_tokens:
+            raise GatewayError(
+                400,
+                "context_length_exceeded",
+                f"The prompt is about {tokens} tokens; the limit is {lim.max_prompt_tokens}.",
+                outcome="rejected",
+                extra={"prompt_tokens_est": tokens},
+            )
+
+    async def _route_with_retry(
+        self, ctx: RequestContext, cfg: GatewayConfig, rec: dict[str, Any]
+    ) -> Routed:
+        """Route; when every backend failed (not merely open breakers), back off and retry the
+        chain, never past the queue deadline."""
+        rc = cfg.router
+        deadline = time.monotonic() + rc.queue_deadline_seconds
+        attempt = 0
+        while True:
+            try:
+                return await self.s.router.route(
+                    config=cfg,
+                    model=ctx.model,
+                    payload={"messages": ctx.messages, **ctx.params},
+                    params=ctx.params,
+                    root=ctx.root,
+                    prompt_tokens=ctx.prompt_tokens_est,
+                    request_id=ctx.id,
+                )
+            except NoBackendAvailable as exc:
+                if attempt >= rc.chain_retries or not exc.failovers:
+                    raise
+                delay = full_jitter(attempt, rc.retry_base_ms / 1000, rc.retry_cap_ms / 1000)
+                if time.monotonic() + delay >= deadline:
+                    raise
+                attempt += 1
+                rec["data"]["chain_retries"] = attempt
+                self.s.bus.publish(
+                    "router.retry",
+                    ctx.id,
+                    attempt=attempt,
+                    delay_ms=round(delay * 1000, 1),
+                    reason=str(exc),
+                )
+                await asyncio.sleep(delay)
+
     # ------------------------------------------------------------------ streaming paths
 
     async def _lead(
@@ -502,6 +600,7 @@ class Pipeline:
         parts: list[str] = []
         usage: dict[str, Any] | None = None
         finish: str | None = None
+        tool_calls = False
         status, error = "ok", None
         s.bus.publish("stage.enter", ctx.id, stage="relay")
         relay_span = telemetry.tracer().start_span(
@@ -517,6 +616,7 @@ class Pipeline:
                 text, fin = _delta_content(chunk)
                 parts.append(text)
                 finish = fin or finish
+                tool_calls = tool_calls or _has_tool_calls(chunk)
                 out = {**chunk, "id": ctx.id, "model": ctx.model}
                 await flight.push(out)
                 if chunk.get("choices"):
@@ -562,7 +662,10 @@ class Pipeline:
                 usage=usage,
                 error=error,
                 routed=routed,
-                cache_write=(keys, vector) if status == "ok" and content else None,
+                # a tool call is an instruction to act on this conversation, not a reusable answer
+                cache_write=(keys, vector)
+                if status == "ok" and content and not tool_calls
+                else None,
                 finish_reason=finish,
             )
         yield "summary", summary
@@ -736,7 +839,7 @@ class Pipeline:
             "id": ctx.id,
             "ts": time.time(),
             "tenant": ctx.tenant,
-            "api_key": ctx.api_key,
+            "key_id": ctx.key_id,
             "model": ctx.model,
             "backend": backend,
             "status": status,
@@ -756,13 +859,13 @@ class Pipeline:
             "error": error,
             "redactions": ctx.redactions or None,
         }
-        if ctx.api_key and http_status not in (401,):
+        if ctx.key_id and http_status not in (401,):
             s.ledger.record_request(record)
 
         # Settle the rate limit to what the backends actually processed; charge the budget.
         if ctx.reserved:
             delta = upstream_tokens - ctx.reserved
-            key, redis_ok = ctx.api_key, s.redis_ok
+            key, redis_ok = ctx.key_id, s.redis_ok
             s.recorder.submit(lambda: s.limiter.settle(key, delta, redis_ok))
         if cost > 0:
             tenant, redis_ok = ctx.tenant, s.redis_ok
@@ -793,7 +896,7 @@ class Pipeline:
             "status": status,
             "http_status": http_status,
             "tenant": ctx.tenant,
-            "api_key": ctx.api_key,
+            "key_id": ctx.key_id,
             "model": ctx.model,
             "backend": backend,
             "cache": cache,
@@ -826,6 +929,25 @@ class Pipeline:
             ctx.id,
             **{k: v for k, v in summary.items() if k not in ("request_id", "stages")},
         )
+        request_log.log(
+            logging.WARNING if status not in ("ok", "rejected", "blocked") else logging.INFO,
+            "request",
+            extra={
+                "status": status,
+                "http_status": http_status,
+                "model": ctx.model,
+                "key_id": ctx.key_id or None,
+                "backend": backend,
+                "cache": cache,
+                "latency_ms": latency,
+                "ttft_ms": ttft,
+                "tokens_in": record["tokens_in"],
+                "tokens_out": tokens_out,
+                "cost_est_usd": record["cost_est_usd"],
+                "failovers": record["failovers"],
+                "error": error,
+            },
+        )
         root = ctx.root
         root.set_attributes(
             telemetry._clean(
@@ -851,6 +973,11 @@ class Pipeline:
                     "gen_ai.response.model": routed.attempt.rt.backend.upstream_model,
                     "gen_ai.usage.input_tokens": tokens_in,
                     "gen_ai.usage.output_tokens": tokens_out,
+                    "gen_ai.usage.cost": record["cost_est_usd"],
+                    "langfuse.observation.metadata.cost_label": COST_LABEL,
+                    "langfuse.observation.metadata.usage_estimated": bool(
+                        record["usage_estimated"]
+                    ),
                     "gen_ai.response.finish_reasons": [
                         finish_reason or ("error" if error else "stop")
                     ],

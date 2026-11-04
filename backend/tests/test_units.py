@@ -361,3 +361,120 @@ async def test_ledger_batches_writes_off_the_event_loop(tmp_path: Path) -> None:
     assert (await ledger.totals())["requests"] == 500
     await ledger.stop()
     ledger.close()
+
+
+# ------------------------------------------------------------------ production hardening (units)
+
+
+def test_tenant_queries_use_an_index(tmp_path: Path) -> None:
+    """EXPLAIN QUERY PLAN: every read a tenant can make is an index search, never a scan."""
+    from aegis.ledger import Ledger
+
+    ledger = Ledger(tmp_path / "plan.sqlite3")
+    recent = " ".join(ledger.explain(Ledger.RECENT_TENANT_SQL, ("demo", 50)))
+    get = " ".join(ledger.explain(Ledger.GET_TENANT_SQL, ("req_1", "demo")))
+    assert "USING INDEX requests_tenant" in recent and "SCAN" not in recent
+    assert "USING INDEX sqlite_autoindex_requests_1" in get or "PRIMARY KEY" in get
+    ledger.close()
+
+
+def test_old_ledgers_are_migrated_to_key_ids(tmp_path: Path) -> None:
+    import sqlite3
+
+    from aegis.ledger import Ledger
+
+    path = tmp_path / "old.sqlite3"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE requests (id TEXT PRIMARY KEY, ts REAL NOT NULL, tenant TEXT, api_key TEXT)"
+    )
+    conn.execute("INSERT INTO requests VALUES ('r1', 1.0, 'demo', 'aegis-demo-key')")
+    conn.commit()
+    conn.close()
+    ledger = Ledger(path)
+    assert ledger.remap_key_ids({"aegis-demo-key": "demo"}) == 1
+    assert ledger._query("SELECT key_id FROM requests") == [{"key_id": "demo"}]
+    assert ledger.remap_key_ids({"aegis-demo-key": "demo"}) == 0  # idempotent
+    ledger.close()
+
+
+def test_full_jitter_stays_inside_its_window() -> None:
+    import random
+
+    from aegis.retry import full_jitter
+
+    rng = random.Random(7)
+    for attempt in range(6):
+        ceiling = min(2.0, 0.2 * 2**attempt)
+        delays = [full_jitter(attempt, 0.2, 2.0, rng) for _ in range(200)]
+        assert all(0 <= d <= ceiling for d in delays)
+        assert max(delays) > ceiling * 0.8  # it really uses the whole window
+
+
+def test_langfuse_target_uses_basic_auth_on_the_otlp_endpoint() -> None:
+    import base64
+
+    from aegis.settings import Settings
+    from aegis.telemetry import langfuse_target
+
+    assert langfuse_target(Settings()) is None
+    s = Settings(
+        langfuse_host="https://lf.example.com/",
+        langfuse_public_key="pk-lf-1",
+        langfuse_secret_key="sk-lf-2",
+    )
+    t = langfuse_target(s)
+    assert t is not None and t.endpoint == "https://lf.example.com/api/public/otel/v1/traces"
+    assert t.headers["Authorization"] == "Basic " + base64.b64encode(b"pk-lf-1:sk-lf-2").decode()
+
+
+def test_json_logs_carry_the_request_context() -> None:
+    import json as _json
+    import logging
+
+    from aegis import logcontext
+
+    logcontext.bind(request_id="req_x", trace_id="abc123", tenant="demo")
+    record = logging.makeLogRecord(
+        {"name": "aegis.request", "levelname": "INFO", "msg": "request", "status": "ok"}
+    )
+    line = _json.loads(logcontext.JsonFormatter().format(record))
+    assert line["request_id"] == "req_x" and line["trace_id"] == "abc123"
+    assert line["tenant"] == "demo" and line["status"] == "ok" and line["msg"] == "request"
+    logcontext.bind(request_id=None, trace_id=None, tenant=None)
+
+
+def test_access_rules() -> None:
+    from aegis.config import GatewayConfig
+    from aegis.security import principal_for
+    from aegis.settings import Settings
+
+    cfg = GatewayConfig.model_validate(
+        {
+            "backends": {"b": {"model": "m"}},
+            "models": {"m": {"chain": ["b"]}},
+            "keys": {
+                "tenant-key": {"tenant": "t", "tpm": 1, "budget": {"soft": 1, "hard": 2}},
+                "admin-key": {
+                    "tenant": "o",
+                    "tpm": 1,
+                    "budget": {"soft": 1, "hard": 2},
+                    "role": "admin",
+                },
+            },
+        }
+    )
+    prod, dev = Settings(), Settings(env="dev")
+    assert prod.env == "production"  # the default
+    assert principal_for(prod, cfg, None, "127.0.0.1") is None  # loopback means nothing in prod
+    local = principal_for(dev, cfg, None, "127.0.0.1")
+    assert local is not None and local.is_admin
+    assert principal_for(dev, cfg, None, "10.0.0.8") is None  # dev trusts loopback only
+    tenant = principal_for(prod, cfg, "tenant-key", "10.0.0.8")
+    assert tenant is not None and not tenant.is_admin and tenant.can_see("t")
+    assert not tenant.can_see("o")
+    admin = principal_for(prod, cfg, "admin-key", "10.0.0.8")
+    assert admin is not None and admin.is_admin and admin.can_see("t")
+    assert principal_for(dev, cfg, "wrong-key", "127.0.0.1") is None  # a bad key is never local
+    assert cfg.keys["tenant-key"].id.startswith("key_")  # fingerprint, not the key
+    assert "tenant-key" not in str(cfg.public_view())

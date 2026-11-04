@@ -4,6 +4,9 @@ chaos actions).
 Writes never touch the request path. Callers put rows on a queue; one background task drains it
 in batches (up to 200 rows or every 250 ms) and runs each batch in a worker thread, so a burst of
 requests never blocks the event loop on disk I/O.
+
+Rows carry the key's public id, never the key. Every read a tenant can make is filtered by tenant
+in SQL and served by an index (`tests/test_units.py` checks the query plans).
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ from typing import Any
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS requests (
-  id TEXT PRIMARY KEY, ts REAL NOT NULL, tenant TEXT, api_key TEXT, model TEXT, backend TEXT,
+  id TEXT PRIMARY KEY, ts REAL NOT NULL, tenant TEXT, key_id TEXT, model TEXT, backend TEXT,
   status TEXT, http_status INTEGER, cache TEXT, coalesced INTEGER, hedged INTEGER,
   failovers INTEGER, tokens_in INTEGER, tokens_out INTEGER, usage_estimated INTEGER,
   latency_ms REAL, ttft_ms REAL, cost_est_usd REAL, saved_est_usd REAL, trace_id TEXT,
@@ -30,13 +33,14 @@ CREATE INDEX IF NOT EXISTS requests_tenant ON requests(tenant, ts);
 CREATE TABLE IF NOT EXISTS system_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, kind TEXT, backend TEXT, detail TEXT
 );
+CREATE INDEX IF NOT EXISTS system_events_kind ON system_events(kind);
 """
 
 COLUMNS = (
     "id",
     "ts",
     "tenant",
-    "api_key",
+    "key_id",
     "model",
     "backend",
     "status",
@@ -70,11 +74,36 @@ class Ledger:
         self._conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._migrate()
         self._conn.executescript(SCHEMA)
         self.rows_written = 0
         self.batches = 0
         self.dropped = 0
         self.last_batch_ms = 0.0
+
+    def _migrate(self) -> None:
+        """Ledgers written before key ids stored the raw key in `api_key`: rename the column.
+        `remap_key_ids` then replaces those values with public ids."""
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(requests)")}
+        if "api_key" in cols and "key_id" not in cols:
+            self._conn.execute("ALTER TABLE requests RENAME COLUMN api_key TO key_id")
+
+    def remap_key_ids(self, mapping: dict[str, str]) -> int:
+        """Replace stored raw keys with their public ids (idempotent; a no-op once clean)."""
+        changed = 0
+        with self._db_lock:
+            for raw, key_id in mapping.items():
+                if raw != key_id:
+                    cur = self._conn.execute(
+                        "UPDATE requests SET key_id = ? WHERE key_id = ?", (key_id, raw)
+                    )
+                    changed += cur.rowcount
+        return changed
+
+    def explain(self, sql: str, params: tuple[Any, ...] = ()) -> list[str]:
+        """SQLite's query plan (EXPLAIN QUERY PLAN), for the index checks in the tests."""
+        with self._db_lock:
+            return [str(r[3]) for r in self._conn.execute(f"EXPLAIN QUERY PLAN {sql}", params)]
 
     # --------------------------------------------------------------- writing
 
@@ -197,11 +226,22 @@ class Ledger:
             (month_start,),
         )
 
-    async def recent(self, limit: int = 50) -> list[dict[str, Any]]:
-        return await self.query("SELECT * FROM requests ORDER BY ts DESC LIMIT ?", (limit,))
+    RECENT_SQL = "SELECT * FROM requests ORDER BY ts DESC LIMIT ?"
+    RECENT_TENANT_SQL = "SELECT * FROM requests WHERE tenant = ? ORDER BY ts DESC LIMIT ?"
+    GET_SQL = "SELECT * FROM requests WHERE id = ?"
+    GET_TENANT_SQL = "SELECT * FROM requests WHERE id = ? AND tenant = ?"
 
-    async def get(self, request_id: str) -> dict[str, Any] | None:
-        rows = await self.query("SELECT * FROM requests WHERE id = ?", (request_id,))
+    async def recent(self, limit: int = 50, tenant: str | None = None) -> list[dict[str, Any]]:
+        if tenant is None:
+            return await self.query(self.RECENT_SQL, (limit,))
+        return await self.query(self.RECENT_TENANT_SQL, (tenant, limit))
+
+    async def get(self, request_id: str, tenant: str | None = None) -> dict[str, Any] | None:
+        """With a tenant, a row of another tenant is simply not found (no IDOR by id)."""
+        if tenant is None:
+            rows = await self.query(self.GET_SQL, (request_id,))
+        else:
+            rows = await self.query(self.GET_TENANT_SQL, (request_id, tenant))
         return rows[0] if rows else None
 
     def ping(self) -> float:

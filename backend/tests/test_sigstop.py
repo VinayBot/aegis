@@ -61,6 +61,7 @@ async def stoppable(
     cfg.write_text(yaml.safe_dump(data))
     gw_port = free_port()
     settings = Settings(
+        env="dev",  # chaos (SIGSTOP) is dev-only
         config_path=cfg,
         redis_prefix=f"aegistest-{uuid.uuid4().hex[:8]}",
         ledger_path=tmp_path / "l.sqlite3",

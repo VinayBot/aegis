@@ -52,7 +52,10 @@ curl -s http://127.0.0.1:11434/api/generate -d "{\"model\":\"$OLLAMA_MODEL\",\"k
 
 # 4. the gateway
 say "starting the gateway on :8000"
-(cd "$ROOT/backend" && AEGIS_CHAOS_ENABLED=1 uv run uvicorn aegis.main:app --host 127.0.0.1 --port 8000 >"$LOG/gateway.log" 2>&1) &
+# AEGIS_ENV=dev: loopback callers are the local operator (the site needs no key) and chaos may run.
+# Without it the gateway is in production mode: admin key required, chaos refused.
+(cd "$ROOT/backend" && AEGIS_ENV=dev AEGIS_CHAOS_ENABLED=1 uv run uvicorn aegis.main:app \
+  --host 127.0.0.1 --port 8000 --timeout-graceful-shutdown 5 >"$LOG/gateway.log" 2>&1) &
 pids+=($!); echo $! >"$RUN/gateway.pid"
 wait_for http://127.0.0.1:8000/api/health "gateway" 90
 
