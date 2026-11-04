@@ -33,7 +33,7 @@ and events.
 | 24 | Async generators | The pipeline is a chain of async generators; cancellation flows upstream | `test_websocket_cancel_stops_the_model` |
 | 24 | WebSockets | `/v1/ws/chat` (full duplex, mid-stream cancel) and `/ws/events` (live events) | Playground "Transport: WebSocket" and Stop |
 | 25 | Architecture | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), the live map; API keys or short-lived JWTs with tenant and role ([security.py](backend/aegis/security.py)) | Architecture tab; `tests/test_jwt.py` |
-| 25 | Peer auditing | [docs/PEER_AUDIT.md](docs/PEER_AUDIT.md): a 30-minute audit guide and 24 findings already fixed, 10 of them from an independent review | |
+| 25 | Peer auditing | [docs/PEER_AUDIT.md](docs/PEER_AUDIT.md): a 30-minute audit guide and 27 findings already fixed: 10 from an independent review, 3 from property-based testing | |
 | 25 | Production readiness | [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md): the capstone checklist with evidence, SLOs, runbook, known gaps | CI, `make image` |
 | 25 | Final demonstration | [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) | |
 
@@ -64,7 +64,7 @@ Other targets:
 
 | Target | What it does |
 | --- | --- |
-| `make test` | backend (148) and frontend tests; needs `make infra` for Redis |
+| `make test` | backend (164, including property-based) and frontend tests; needs `make infra` for Redis |
 | `make evals` / `make evals-live` | the evaluation gate (offline / with Llama Guard) |
 | `make e2e` | 21 browser tests against `make dev` |
 | `make loadtest` | throughput and latency percentiles against `make dev` |

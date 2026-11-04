@@ -27,7 +27,8 @@ ADMIN = Depends(require_admin)
 
 
 def _state(request: Request) -> AppState:
-    return request.app.state.state
+    state: AppState = request.app.state.state
+    return state
 
 
 @router.get("/health", summary="Per-component status from real probes")
@@ -235,7 +236,8 @@ async def breaker_reset(request: Request, backend: str) -> dict[str, Any]:
 
 @router.get("/scenarios", summary="Guided Chaos Lab scenarios")
 async def scenario_list(request: Request) -> list[dict[str, Any]]:
-    return request.app.state.scenarios.list()
+    runner: scenarios.ScenarioRunner = request.app.state.scenarios
+    return runner.list()
 
 
 @router.post(

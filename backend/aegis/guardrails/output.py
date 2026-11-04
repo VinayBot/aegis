@@ -30,29 +30,31 @@ _BREAKS = frozenset(" \t\n\"'`,;{}[]<>|=&?")
 _NUMERIC_CHARS = frozenset("+()-.0123456789")
 
 
-def _numeric_word(word: str) -> bool:
-    """A word that could be part of a phone or card number ("+91", "98765", "(415)")."""
-    return any(c.isdigit() for c in word) and all(c in _NUMERIC_CHARS for c in word)
+def _glued(ready: str, pos: int) -> bool:
+    """Is the text at `pos` stuck to a token on its left (no space between)?"""
+    return pos > 0 and (ready[pos - 1].isalnum() or ready[pos - 1] in "_@%")
 
 
 def _numeric_tail_start(ready: str) -> int | None:
-    """Where the trailing run of number-like words begins, if any. A plain backwards scan:
-    linear in the length, so no input can make it slow (a nested-quantifier regex here once
-    backtracked exponentially on "(1) (1) (1) ...")."""
-    pos, start = len(ready), None
-    while pos > 0:
-        gap_end = pos
-        while pos > 0 and ready[pos - 1] in " \t":
+    """Where to hold back from so no phone or card number is split: the trailing run of number
+    characters and spaces ("+91 98765 43210 "); when that run is glued to a token
+    ("Tel:+91 ...", "mail@x.com+91 ...", "43210v3.12", a key ending in digits) the whole token is
+    held, and the scan goes on from its start, which may itself follow a number. None when the
+    tail holds no digit. A plain backwards scan: linear, and each step moves strictly left, so no
+    input can make it slow (a nested-quantifier regex here once backtracked exponentially)."""
+    pos, digit = len(ready), False
+    while True:
+        end = pos
+        while pos > 0 and (ready[pos - 1] in _NUMERIC_CHARS or ready[pos - 1] in " \t"):
             pos -= 1
-        if pos == gap_end:
-            break  # a word must be followed by a space or a tab
-        word_end = pos
-        while pos > 0 and not ready[pos - 1].isspace():
-            pos -= 1
-        if not _numeric_word(ready[pos:word_end]):
+        while pos < end and ready[pos] in " \t":  # spaces before a number are not glue
+            pos += 1
+        digit = digit or any(c.isdigit() for c in ready[pos:end])
+        if not digit or not _glued(ready, pos):
             break
-        start = pos
-    return start
+        while pos > 0 and not ready[pos - 1].isspace() and ready[pos - 1] not in _BREAKS:
+            pos -= 1  # hold the whole token the number is stuck to
+    return pos if digit and pos < len(ready) else None
 
 
 def _luhn(number: str) -> bool:
@@ -84,12 +86,12 @@ _RULES: list[tuple[str, re.Pattern[str], Callable[[str], bool] | None]] = [
     ),
     ("CREDIT_CARD", re.compile(r"\b(?:\d[ -]?){12,18}\d\b"), _luhn),
     (
-        # unambiguous formats only, never inside a longer run of digits: an international number
-        # with its +, US (415) 555-0123 or 415-555-0123, and Indian 10-digit mobiles
+        # unambiguous formats only, never inside a longer run of digits and never across a line:
+        # an international number with its +, US (415) 555-0123 or 415-555-0123, Indian mobiles
         "PHONE_NUMBER",
         re.compile(
-            r"(?<![\w+])\+\d{1,3}(?:[\s.-]?\d{2,5}){2,4}(?![\d])"
-            r"|(?<![\w(])\(\d{3}\)\s?\d{3}[\s.-]\d{4}\b"
+            r"(?<![\w+])\+\d{1,3}(?:[ .-]?\d{2,5}){2,4}(?![\d])"
+            r"|(?<![\w(])\(\d{3}\) ?\d{3}[ .-]\d{4}\b"
             r"|(?<![\w-])\d{3}-\d{3}-\d{4}\b"
             r"|(?<![\w])[6-9]\d{9}\b"
         ),

@@ -1,7 +1,8 @@
 # Contributing
 
 1. `make setup` once; `make infra` for Redis and Jaeger; `make dev` for the whole system.
-2. Before a commit: `make lint typecheck test evals`. With `make dev` running: `make e2e sweep`.
+2. `pre-commit install` once; before a commit also `make test evals`. With `make dev` running:
+   `make e2e sweep`. Lint keeps functions at complexity 12 or less; mypy runs in strict mode.
 3. A change to a guardrail, the cache threshold or the safety threshold comes with a row in
    `backend/evals/data/` that shows it, and the eval gate must still pass.
 4. A new backend is a YAML entry (`backend/config/gateway.yaml`); it appears on the map and in

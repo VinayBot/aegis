@@ -26,6 +26,13 @@ from prometheus_client import (
 from aegis.events import EventBus
 
 BREAKER_VALUE = {"closed": 0, "half_open": 1, "open": 2}
+# events that mean "refused before any model", by reason
+REJECTIONS = {
+    "ratelimit.reject": "rate_limit",
+    "budget.block": "budget",
+    "guardrail.block": "guardrail",
+    "safety.block": "safety",
+}
 LATENCY_BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 40)
 
 __all__ = ["CONTENT_TYPE_LATEST", "PromMetrics"]
@@ -118,37 +125,11 @@ class PromMetrics:
     # ----------------------------------------------------------------- events -> series
 
     def observe(self, e: dict[str, Any]) -> None:
-        kind = e.get("type")
+        kind = str(e.get("type"))
         if kind == "request.end":
-            model, backend = str(e.get("model") or "?"), str(e.get("backend") or "none")
-            cache, status = str(e.get("cache") or "miss"), str(e.get("status") or "?")
-            self.requests.labels(model, backend, cache, status).inc()
-            if e.get("latency_ms") is not None:
-                self.latency.labels(model, cache).observe(float(e["latency_ms"]) / 1000)
-            if (
-                e.get("ttft_ms") is not None
-                and cache in ("miss", "bypass")
-                and not e.get("coalesced")
-            ):
-                self.ttft.labels(backend).observe(float(e["ttft_ms"]) / 1000)
-            if cache in ("miss", "bypass"):
-                self.tokens.labels("in", backend).inc(int(e.get("tokens_in") or 0))
-                self.tokens.labels("out", backend).inc(int(e.get("tokens_out") or 0))
-            tenant = str(e.get("tenant") or "?")
-            if e.get("cost_est_usd"):
-                self.cost.labels(tenant).inc(float(e["cost_est_usd"]))
-            if e.get("saved_est_usd"):
-                self.saved.labels(tenant).inc(float(e["saved_est_usd"]))
-            if e.get("hedged"):
-                self.hedges.labels("won_by_hedge" if e.get("hedge_won") else "won_by_primary").inc()
-            for entity, n in (e.get("redactions") or {}).items():
-                self.redactions.labels(entity).inc(int(n))
-        elif kind == "ratelimit.reject":
-            self.rejections.labels("rate_limit").inc()
-        elif kind == "budget.block":
-            self.rejections.labels("budget").inc()
-        elif kind == "guardrail.block":
-            self.rejections.labels("guardrail").inc()
+            self._request_end(e)
+        elif kind in REJECTIONS:
+            self.rejections.labels(REJECTIONS[kind]).inc()
         elif kind == "failover":
             self.failovers.inc()
         elif kind == "router.retry":
@@ -159,6 +140,30 @@ class PromMetrics:
             ).inc()
         elif kind == "breaker.state":
             self.breaker_transitions.labels(str(e.get("backend")), str(e.get("state"))).inc()
+
+    def _request_end(self, e: dict[str, Any]) -> None:
+        model, backend = str(e.get("model") or "?"), str(e.get("backend") or "none")
+        cache, status = str(e.get("cache") or "miss"), str(e.get("status") or "?")
+        self.requests.labels(model, backend, cache, status).inc()
+        if e.get("latency_ms") is not None:
+            self.latency.labels(model, cache).observe(float(e["latency_ms"]) / 1000)
+        reached_model = cache in ("miss", "bypass")
+        if reached_model and e.get("ttft_ms") is not None and not e.get("coalesced"):
+            self.ttft.labels(backend).observe(float(e["ttft_ms"]) / 1000)
+        if reached_model:
+            self.tokens.labels("in", backend).inc(int(e.get("tokens_in") or 0))
+            self.tokens.labels("out", backend).inc(int(e.get("tokens_out") or 0))
+        self._money(str(e.get("tenant") or "?"), e)
+        if e.get("hedged"):
+            self.hedges.labels("won_by_hedge" if e.get("hedge_won") else "won_by_primary").inc()
+        for entity, n in (e.get("redactions") or {}).items():
+            self.redactions.labels(entity).inc(int(n))
+
+    def _money(self, tenant: str, e: dict[str, Any]) -> None:
+        if e.get("cost_est_usd"):
+            self.cost.labels(tenant).inc(float(e["cost_est_usd"]))
+        if e.get("saved_est_usd"):
+            self.saved.labels(tenant).inc(float(e["saved_est_usd"]))
 
     async def _run(self) -> None:
         async with self.bus.subscribe() as queue:

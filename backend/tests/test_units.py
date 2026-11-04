@@ -534,9 +534,11 @@ def test_stream_redactor_keeps_words_whole() -> None:
     from aegis.guardrails.output import StreamRedactor
 
     r = StreamRedactor()
-    assert r.feed("pong0 ") == "pong0 "  # a digit ending a word is not a number to hold back
     assert r.feed("call 98 ") == "call "  # a number-like word is held until the next word
     assert r.feed("later ") == "98 later "
+    # a token ending in digits could be a key ("sk-...0123"): held whole, released whole
+    assert r.feed("pong0 ") == ""
+    assert r.feed("next ") == "pong0 next "
 
 
 def test_p_unsafe_from_logprobs() -> None:

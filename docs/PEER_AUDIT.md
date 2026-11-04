@@ -1,7 +1,7 @@
 # Peer audit
 
 A guide for a classmate auditing AEGIS, and the record of the audits done so far. Each check has
-the command or the place to look, so an audit takes about 30 minutes and needs no prior context. 24 findings are recorded and fixed below.
+the command or the place to look, so an audit takes about 30 minutes and needs no prior context. 27 findings are recorded and fixed below.
 
 ## How to audit (for the reviewer)
 
@@ -87,6 +87,18 @@ finding. Please add your findings to the table at the end (or open an issue).
 | 22 | A YAML typo made `/readyz` fail on every replica although the last good config kept serving | medium | Reported, not failed; test |
 | 23 | The Playground's WebSocket promise never settled if the server closed without a final frame | low | `onclose` settles it |
 | 24 | In dev, any website open in the same browser could drive the loopback-trusted control plane | medium | A foreign `Origin` is never the local operator; test |
+
+### Property-based testing, 2026-11-05 (Hypothesis, the streaming output guard)
+
+The guard's promise was written as a property (however the text is chunked, the stream equals
+redacting the whole text) and Hypothesis generated the inputs. It shrank three failures to
+minimal examples within seconds; the property now holds over 30,000 generated cases.
+
+| # | Finding | Severity | Fix |
+| --- | --- | --- | --- |
+| 25 | A number glued to a word ("Tel:+91 98765 43210") was split: the "+91" left early and the rest no longer matched, so the number leaked | high | The held-back run extends to the whole token it is glued to |
+| 26 | Two numbers separated only by a comma, or a number glued on its right ("43210v3.12"), were cut mid-number | medium | One loop rule over number runs and glued tokens, linear and strictly leftward |
+| 27 | On whole text, the international phone pattern accepted a newline between digit groups and swallowed part of the next line's number | low | Separators are spaces, dots and dashes; a number never spans a line |
 
 ### Peer audit (to be filled in by the reviewer)
 

@@ -50,10 +50,12 @@ class Embedder:
             vectors = np.asarray(list(self._model.embed(texts, batch_size=BATCH)), dtype=np.float32)
         self.latencies_ms.append((time.perf_counter() - start) * 1000)
         norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-        return vectors / np.maximum(norms, 1e-9)
+        normalised: np.ndarray = vectors / np.maximum(norms, 1e-9)
+        return normalised
 
     async def embed(self, texts: list[str]) -> np.ndarray:
         return await asyncio.to_thread(self.embed_sync, texts)
 
     async def embed_one(self, text: str) -> np.ndarray:
-        return (await self.embed([text]))[0]
+        vector: np.ndarray = (await self.embed([text]))[0]
+        return vector

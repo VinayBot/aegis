@@ -240,6 +240,18 @@ SSE stays the OpenAI-compatible default. `/v1/ws/chat` adds what SSE cannot do: 
 cancel a generation mid-stream, which cancels the upstream call and frees its slot, and many
 requests share one connection. Same pipeline, same guardrails, same traces.
 
+## Code health is enforced, not hoped for
+
+- **Complexity at most 12** (ruff C90 in CI and pre-commit). The request path is one short method
+  that names each stage (`Pipeline._run`); the router's race to a first token is a small object,
+  `_Race`, with one method per step (it was a 180-line closure at complexity 28).
+- **Strict typing**: every function typed, no `Any` leaking out of a typed function, no implicit
+  re-exports (`disallow_untyped_defs`, `warn_return_any`...), and `strict` TypeScript.
+- **Property-based tests** (Hypothesis) state the invariants the riskiest code must keep: the
+  streaming redactor equals whole-text redaction under any chunking, backoff stays in its window,
+  cache keys never collide across tenants or parameters. They found three real bugs.
+- **Pre-commit** runs the same checks locally as CI.
+
 ## Embedding in batches of 16
 
 The docs index embedded every chunk in one fastembed call (default batch 256): a 1.49 GB peak at

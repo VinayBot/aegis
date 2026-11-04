@@ -359,181 +359,9 @@ class Router:
         prompt_tokens: int,
         request_id: str,
     ) -> Routed:
-        chain = config.models[model].chain
-        failovers: list[dict[str, Any]] = []
-        tried: set[str] = set()
-        attempts: list[Attempt] = []
-        hedged = False  # a hedge request was actually fired
-        hedge_checked = False  # the hedge timer has fired for the current primary
-        slot_wait_ms = 0.0
-
-        async def launch_next() -> None:
-            nonlocal slot_wait_ms
-            rt, waited, probe = await self._acquire(chain, tried, config, request_id, failovers)
-            slot_wait_ms += waited
-            tried.add(rt.name)
-            attempts.append(
-                self._launch(
-                    rt,
-                    payload,
-                    params,
-                    root,
-                    prompt_tokens,
-                    config,
-                    hedge=False,
-                    is_probe=probe,
-                    request_id=request_id,
-                )
-            )
-
-        await launch_next()
-        hedge_at = attempts[0].started + self.hedge_delay_ms(attempts[0].rt, config) / 1000.0
-
-        def fail(attempt: Attempt, error: BackendError) -> None:
-            attempts.remove(attempt)
-            rt = attempt.rt
-            if attempt.getter is not None:
-                attempt.getter.cancel()
-            if error.kind == "timeout":
-                rt.counters["timeouts"] += 1
-                rt.breaker.record_timeout(str(error))
-                if attempt.task is not None:
-                    attempt.task.cancel()
-            else:
-                rt.counters["errors"] += 1
-                rt.breaker.record_error(f"{error.kind}: {error}")
-            telemetry.end_error(attempt.span, str(error), **{"aegis.failure": error.kind})
-            failovers.append({"backend": rt.name, "reason": error.kind, "detail": str(error)[:160]})
-            self.bus.publish(
-                "failover",
-                request_id,
-                backend=rt.name,
-                reason=error.kind,
-                detail=str(error)[:160],
-                hedge=attempt.hedge,
-            )
-            if error.kind not in FAILOVER_KINDS:
-                raise UpstreamClientError(error)  # the outer handler cancels the others
-
-        try:
-            while True:
-                for a in attempts:
-                    if a.getter is None or a.getter.done():
-                        a.getter = asyncio.get_running_loop().create_task(a.queue.get())
-                now = time.monotonic()
-                wake = min(a.deadline for a in attempts)
-                if not hedge_checked:
-                    wake = min(wake, hedge_at)
-                done, _ = await asyncio.wait(
-                    [a.getter for a in attempts if a.getter],
-                    timeout=max(0.0, wake - now),
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                winner: Attempt | None = None
-                for a in list(attempts):
-                    if a.getter not in done or a.getter is None:
-                        continue
-                    kind, value = a.getter.result()
-                    a.getter = None
-                    if kind == "chunk":
-                        a.buffered.append(value)
-                        if is_first_token(value):
-                            winner = a
-                            break
-                    elif kind == "done":
-                        a.queue.put_nowait(("done", None))  # let the relay see the end too
-                        winner = a
-                        break
-                    else:
-                        fail(a, value)
-                if winner is not None:
-                    winner.first_token_at = time.monotonic()
-                    ttft = (winner.first_token_at - winner.started) * 1000
-                    rt = winner.rt
-                    rt.ttft_ms.append(ttft)
-                    rt.counters["first_tokens"] += 1
-                    rt.breaker.record_success()
-                    if winner.getter is not None:
-                        winner.getter.cancel()
-                        winner.getter = None
-                    losers = [a for a in attempts if a is not winner]
-                    for loser in losers:
-                        self._cancel(loser, f"lost hedge race to {rt.name}")
-                    hedge_winner = None
-                    if hedged:
-                        hedge_winner = rt.name
-                        if winner.hedge:
-                            rt.counters["hedges_won"] += 1
-                        self.bus.publish(
-                            "hedge.win",
-                            request_id,
-                            winner=rt.name,
-                            losers=[a.rt.name for a in losers],
-                            ttft_ms=round(ttft, 1),
-                        )
-                    self.bus.publish(
-                        "backend.first_token",
-                        request_id,
-                        backend=rt.name,
-                        ttft_ms=round(ttft, 1),
-                        hedge=winner.hedge,
-                    )
-                    return Routed(winner, ttft, failovers, hedged, hedge_winner, slot_wait_ms)
-
-                now = time.monotonic()
-                for a in list(attempts):
-                    if now >= a.deadline:
-                        fail(
-                            a,
-                            BackendError(
-                                "timeout", f"no first token within {a.deadline - a.started:.1f}s"
-                            ),
-                        )
-                if not hedge_checked and attempts and now >= hedge_at:
-                    hedge_checked = True
-                    busy = {a.rt.name for a in attempts}
-                    target = self._try_hedge_backend(chain, busy | tried)
-                    if target is not None and await target.acquire(0):
-                        hedged = True
-                        tried.add(target.name)
-                        primary = attempts[0].rt.name
-                        self.bus.publish(
-                            "hedge.fire",
-                            request_id,
-                            primary=primary,
-                            hedge=target.name,
-                            after_ms=round((now - attempts[0].started) * 1000, 1),
-                        )
-                        attempts.append(
-                            self._launch(
-                                target,
-                                payload,
-                                params,
-                                root,
-                                prompt_tokens,
-                                config,
-                                hedge=True,
-                                is_probe=False,
-                                request_id=request_id,
-                            )
-                        )
-                    else:
-                        self.bus.publish(
-                            "hedge.skip",
-                            request_id,
-                            primary=attempts[0].rt.name,
-                            reason="no other backend with a free slot",
-                        )
-                if not attempts:
-                    await launch_next()
-                    hedge_at = (
-                        attempts[0].started + self.hedge_delay_ms(attempts[0].rt, config) / 1000.0
-                    )
-                    hedge_checked = hedged
-        except BaseException:
-            for a in list(attempts):
-                self._cancel(a, "request abandoned")
-            raise
+        """Race the chain to a first token: see `_Race`."""
+        race = _Race(self, config, model, payload, params, root, prompt_tokens, request_id)
+        return await race.run()
 
     async def relay(self, routed: Routed) -> AsyncIterator[dict[str, Any]]:
         attempt = routed.attempt
@@ -554,3 +382,207 @@ class Router:
         finally:
             if attempt.task is not None and not attempt.task.done():
                 attempt.task.cancel()
+
+
+class _Race:
+    """One request's race to a first token across its chain.
+
+    Launch the first usable backend; then loop: wait for any attempt's next event, crown the
+    first attempt to stream a token (cancelling the rest), fail attempts that errored or passed
+    their first-token deadline (each failure feeds that backend's breaker and is a failover),
+    hedge once the primary is slower than its p95 TTFT, and launch the next backend when no
+    attempt is left. Abandoning the race (cancellation) cancels every attempt.
+    """
+
+    def __init__(
+        self,
+        router: Router,
+        config: GatewayConfig,
+        model: str,
+        payload: dict[str, Any],
+        params: dict[str, Any],
+        root: Span,
+        prompt_tokens: int,
+        request_id: str,
+    ) -> None:
+        self.r = router
+        self.config = config
+        self.chain = config.models[model].chain
+        self.payload, self.params, self.root = payload, params, root
+        self.prompt_tokens, self.request_id = prompt_tokens, request_id
+        self.failovers: list[dict[str, Any]] = []
+        self.tried: set[str] = set()
+        self.attempts: list[Attempt] = []
+        self.hedged = False  # a hedge request was actually fired
+        self.hedge_checked = False  # the hedge timer has fired for the current primary
+        self.hedge_at = 0.0
+        self.slot_wait_ms = 0.0
+
+    async def run(self) -> Routed:
+        await self._launch_next()
+        try:
+            while True:
+                winner = await self._next_first_token()
+                if winner is not None:
+                    return self._crown(winner)
+                self._expire()
+                await self._maybe_hedge()
+                if not self.attempts:
+                    await self._launch_next()
+                    self.hedge_checked = self.hedged
+        except BaseException:
+            for a in list(self.attempts):
+                self.r._cancel(a, "request abandoned")
+            raise
+
+    def _launch(self, rt: BackendRuntime, *, hedge: bool, is_probe: bool) -> None:
+        self.attempts.append(
+            self.r._launch(
+                rt,
+                self.payload,
+                self.params,
+                self.root,
+                self.prompt_tokens,
+                self.config,
+                hedge=hedge,
+                is_probe=is_probe,
+                request_id=self.request_id,
+            )
+        )
+
+    async def _launch_next(self) -> None:
+        """The next usable backend in chain order (raises NoBackendAvailable when none is)."""
+        rt, waited, probe = await self.r._acquire(
+            self.chain, self.tried, self.config, self.request_id, self.failovers
+        )
+        self.slot_wait_ms += waited
+        self.tried.add(rt.name)
+        self._launch(rt, hedge=False, is_probe=probe)
+        first = self.attempts[0]
+        self.hedge_at = first.started + self.r.hedge_delay_ms(first.rt, self.config) / 1000.0
+
+    async def _next_first_token(self) -> Attempt | None:
+        """Wait for the next event from any attempt, until a deadline or the hedge timer. Returns
+        the attempt that streamed a first token (or finished), failing those that errored."""
+        for a in self.attempts:
+            if a.getter is None or a.getter.done():
+                a.getter = asyncio.get_running_loop().create_task(a.queue.get())
+        wake = min(a.deadline for a in self.attempts)
+        if not self.hedge_checked:
+            wake = min(wake, self.hedge_at)
+        done, _ = await asyncio.wait(
+            [a.getter for a in self.attempts if a.getter],
+            timeout=max(0.0, wake - time.monotonic()),
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for a in list(self.attempts):
+            if a.getter not in done or a.getter is None:
+                continue
+            kind, value = a.getter.result()
+            a.getter = None
+            if kind == "chunk":
+                a.buffered.append(value)
+                if is_first_token(value):
+                    return a
+            elif kind == "done":
+                a.queue.put_nowait(("done", None))  # let the relay see the end too
+                return a
+            else:
+                self._fail(a, value)
+        return None
+
+    def _crown(self, winner: Attempt) -> Routed:
+        winner.first_token_at = time.monotonic()
+        ttft = (winner.first_token_at - winner.started) * 1000
+        rt = winner.rt
+        rt.ttft_ms.append(ttft)
+        rt.counters["first_tokens"] += 1
+        rt.breaker.record_success()
+        if winner.getter is not None:
+            winner.getter.cancel()
+            winner.getter = None
+        losers = [a for a in self.attempts if a is not winner]
+        for loser in losers:
+            self.r._cancel(loser, f"lost hedge race to {rt.name}")
+        hedge_winner = None
+        if self.hedged:
+            hedge_winner = rt.name
+            if winner.hedge:
+                rt.counters["hedges_won"] += 1
+            self.r.bus.publish(
+                "hedge.win",
+                self.request_id,
+                winner=rt.name,
+                losers=[a.rt.name for a in losers],
+                ttft_ms=round(ttft, 1),
+            )
+        self.r.bus.publish(
+            "backend.first_token",
+            self.request_id,
+            backend=rt.name,
+            ttft_ms=round(ttft, 1),
+            hedge=winner.hedge,
+        )
+        return Routed(winner, ttft, self.failovers, self.hedged, hedge_winner, self.slot_wait_ms)
+
+    def _fail(self, attempt: Attempt, error: BackendError) -> None:
+        self.attempts.remove(attempt)
+        rt = attempt.rt
+        if attempt.getter is not None:
+            attempt.getter.cancel()
+        if error.kind == "timeout":
+            rt.counters["timeouts"] += 1
+            rt.breaker.record_timeout(str(error))
+            if attempt.task is not None:
+                attempt.task.cancel()
+        else:
+            rt.counters["errors"] += 1
+            rt.breaker.record_error(f"{error.kind}: {error}")
+        telemetry.end_error(attempt.span, str(error), **{"aegis.failure": error.kind})
+        detail = str(error)[:160]
+        self.failovers.append({"backend": rt.name, "reason": error.kind, "detail": detail})
+        self.r.bus.publish(
+            "failover",
+            self.request_id,
+            backend=rt.name,
+            reason=error.kind,
+            detail=detail,
+            hedge=attempt.hedge,
+        )
+        if error.kind not in FAILOVER_KINDS:
+            raise UpstreamClientError(error)  # run() cancels the others
+
+    def _expire(self) -> None:
+        now = time.monotonic()
+        for a in list(self.attempts):
+            if now >= a.deadline:
+                limit = a.deadline - a.started
+                self._fail(a, BackendError("timeout", f"no first token within {limit:.1f}s"))
+
+    async def _maybe_hedge(self) -> None:
+        """Once the primary is slower than its p95 TTFT, race it against a free backend."""
+        now = time.monotonic()
+        if self.hedge_checked or not self.attempts or now < self.hedge_at:
+            return
+        self.hedge_checked = True
+        busy = {a.rt.name for a in self.attempts}
+        target = self.r._try_hedge_backend(self.chain, busy | self.tried)
+        primary = self.attempts[0]
+        if target is not None and await target.acquire(0):
+            self.hedged = True
+            self.tried.add(target.name)
+            self.r.bus.publish(
+                "hedge.fire",
+                self.request_id,
+                primary=primary.rt.name,
+                hedge=target.name,
+                after_ms=round((now - primary.started) * 1000, 1),
+            )
+            self._launch(target, hedge=True, is_probe=False)
+        else:
+            self.r.bus.publish(
+                "hedge.skip",
+                self.request_id,
+                primary=primary.rt.name,
+                reason="no other backend with a free slot",
+            )

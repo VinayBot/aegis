@@ -23,6 +23,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from opentelemetry import trace
 from opentelemetry.trace import Span
 
 from aegis import guardrails, logcontext, security, telemetry
@@ -324,6 +325,34 @@ class Pipeline:
         api_key: str | None,
         preview: str,
     ) -> Prepared:
+        """The request path, one stage per line. A stage stops the request by raising a
+        GatewayError; each stage is a span, emits enter/exit events and records its outcome."""
+        await self._authenticate(ctx, cfg, api_key, preview)
+        messages = self._validate(ctx, cfg, body)
+        await self._guard(ctx, messages)
+        ctx.params = cfg.effective_params(ctx.model, body)
+        ctx.prompt_tokens_est = estimate_messages(ctx.messages) + estimate_tools(
+            ctx.params.get("tools")
+        )
+        await self._rate_limit(ctx)
+        await self._check_budget(ctx)
+        keys = build_keys(
+            ctx.tenant, ctx.model, ctx.messages, ctx.params, cfg.cache.semantic_max_tokens
+        )
+        hit, vector = await self._lookup_caches(ctx, cfg, keys)
+        if hit is not None:
+            return self._serve_cached(ctx, cfg, hit)
+        flight, leader = await self._coalesce(ctx, keys)
+        if not leader:
+            return await self._follow(ctx, cfg, flight)
+        routed = await self._check_and_route(ctx, cfg, flight)
+        return self._start_stream(ctx, cfg, routed, flight, keys, vector)
+
+    # ------------------------------------------------------------------ stages
+
+    async def _authenticate(
+        self, ctx: RequestContext, cfg: GatewayConfig, api_key: str | None, preview: str
+    ) -> None:
         s = self.s
         # -- auth
         async with self._stage(ctx, "auth") as rec:
@@ -347,6 +376,9 @@ class Pipeline:
         )
         s.bus.publish("request.meta", ctx.id, tenant=ctx.tenant, preview=preview)
 
+    def _validate(
+        self, ctx: RequestContext, cfg: GatewayConfig, body: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         if ctx.model not in cfg.models:
             raise GatewayError(
                 404,
@@ -361,7 +393,11 @@ class Pipeline:
         ):
             raise GatewayError(400, "invalid_request", "`messages` must be a non-empty list.")
         self._check_limits(cfg, body, messages)
+        return messages
 
+    async def _guard(self, ctx: RequestContext, messages: list[dict[str, Any]]) -> None:
+        """PII redaction and the prompt-injection check, before any cache, embedder or model."""
+        s = self.s
         # -- guardrails: PII redaction + prompt-injection check
         async with self._stage(ctx, "guardrails") as rec:
             outcome = await guardrails.check(messages)
@@ -389,11 +425,10 @@ class Pipeline:
                     entities=outcome.redactions,
                     preview=message_text(outcome.messages[-1])[:160],
                 )
-        ctx.params = cfg.effective_params(ctx.model, body)
-        ctx.prompt_tokens_est = estimate_messages(ctx.messages) + estimate_tools(
-            ctx.params.get("tools")
-        )
 
+    async def _rate_limit(self, ctx: RequestContext) -> None:
+        """Tokens per minute, per key: reserve prompt + max_tokens now, settle after."""
+        s = self.s
         # -- rate limit (tokens per minute, per key)
         reserve = ctx.prompt_tokens_est + int(ctx.params.get("max_tokens") or 512)
         async with self._stage(ctx, "ratelimit") as rec:
@@ -421,6 +456,9 @@ class Pipeline:
                 )
         ctx.reserved = reserve
 
+    async def _check_budget(self, ctx: RequestContext) -> None:
+        """Est. cloud-equivalent USD per tenant per month: warn at soft, block at hard."""
+        s = self.s
         # -- budget (est. cloud-equivalent USD per tenant per month)
         key_cfg = ctx.key_cfg
         assert key_cfg is not None
@@ -455,70 +493,87 @@ class Pipeline:
                     hard=status.hard,
                 )
 
-        keys = build_keys(
-            ctx.tenant, ctx.model, ctx.messages, ctx.params, cfg.cache.semantic_max_tokens
-        )
-        vector = None
+    async def _lookup_caches(
+        self, ctx: RequestContext, cfg: GatewayConfig, keys: CacheKeys
+    ) -> tuple[CachedCompletion | None, Any]:
+        """Exact, then semantic. Returns the hit (if any) and the query vector, which the cache
+        write reuses after a miss."""
+        s = self.s
         if ctx.no_cache:
             s.bus.publish("cache.bypass", ctx.id, reason="Cache-Control: no-cache")
-        else:
-            # -- exact cache
-            async with self._stage(ctx, "exact_cache") as rec:
-                hit = None
-                if s.redis_ok:
-                    try:
-                        hit = await s.cache.get_exact(keys.exact)
-                    except Exception as exc:
-                        rec["outcome"] = "skipped"
-                        rec["data"]["error"] = type(exc).__name__
-                else:
-                    rec["outcome"] = "skipped"
-                if hit is not None:
-                    rec["outcome"] = "hit"
+            return None, None
+        hit = await self._exact_lookup(ctx, keys)
+        if hit is not None:
+            return hit, None
+        vector = None
+        if keys.last_user and s.redis_ok and s.cache.index_ready:
+            hit, vector = await self._semantic_lookup(ctx, cfg, keys)
             if hit is not None:
-                return self._serve_cached(ctx, cfg, hit)
+                return hit, vector
+        elif keys.last_user is None:
+            s.bus.publish(
+                "cache.semantic_ineligible",
+                ctx.id,
+                reason="last message is long (RAG-style) or not from the user",
+            )
+        s.bus.publish("cache.miss", ctx.id, best_similarity=ctx.similarity)
+        return None, vector
 
-            # -- semantic cache
-            if keys.last_user and s.redis_ok and s.cache.index_ready:
-                async with self._stage(ctx, "semantic_cache") as rec:
-                    async with self._stage(ctx, "embedder") as erec:
-                        budget_s = cfg.cache.embed_budget_ms / 1000
-                        try:
-                            vector = await asyncio.wait_for(
-                                s.embedder.embed_one(keys.last_user), budget_s
-                            )
-                        except TimeoutError:
-                            erec["outcome"] = "skipped"
-                            erec["data"]["reason"] = (
-                                f"embedder over {cfg.cache.embed_budget_ms} ms budget"
-                            )
-                    hit = None
-                    if vector is not None:
-                        try:
-                            hit, best = await s.cache.get_semantic(
-                                keys.partition, vector, cfg.cache.semantic_threshold
-                            )
-                            if best is not None:
-                                rec["data"]["best_similarity"] = round(best, 4)
-                                ctx.similarity = round(best, 4)
-                        except Exception as exc:
-                            rec["outcome"] = "skipped"
-                            rec["data"]["error"] = type(exc).__name__
-                    else:
-                        rec["outcome"] = "skipped"
-                    rec["data"]["threshold"] = cfg.cache.semantic_threshold
-                    if hit is not None:
-                        rec["outcome"] = "hit"
-                if hit is not None:
-                    return self._serve_cached(ctx, cfg, hit)
-            elif keys.last_user is None:
-                s.bus.publish(
-                    "cache.semantic_ineligible",
-                    ctx.id,
-                    reason="last message is long (RAG-style) or not from the user",
+    async def _exact_lookup(self, ctx: RequestContext, keys: CacheKeys) -> CachedCompletion | None:
+        s = self.s
+        hit = None
+        async with self._stage(ctx, "exact_cache") as rec:
+            if not s.redis_ok:
+                rec["outcome"] = "skipped"
+                return None
+            try:
+                hit = await s.cache.get_exact(keys.exact)
+            except Exception as exc:  # Redis trouble: skip the cache, never fail the request
+                rec["outcome"] = "skipped"
+                rec["data"]["error"] = type(exc).__name__
+            if hit is not None:
+                rec["outcome"] = "hit"
+        return hit
+
+    async def _embed(self, ctx: RequestContext, cfg: GatewayConfig, text: str) -> Any:
+        """The query vector, or None when the embedder is slower than its budget."""
+        async with self._stage(ctx, "embedder") as rec:
+            try:
+                return await asyncio.wait_for(
+                    self.s.embedder.embed_one(text), cfg.cache.embed_budget_ms / 1000
                 )
-            s.bus.publish("cache.miss", ctx.id, best_similarity=ctx.similarity)
+            except TimeoutError:
+                rec["outcome"] = "skipped"
+                rec["data"]["reason"] = f"embedder over {cfg.cache.embed_budget_ms} ms budget"
+                return None
 
+    async def _semantic_lookup(
+        self, ctx: RequestContext, cfg: GatewayConfig, keys: CacheKeys
+    ) -> tuple[CachedCompletion | None, Any]:
+        assert keys.last_user is not None
+        hit = None
+        async with self._stage(ctx, "semantic_cache") as rec:
+            vector = await self._embed(ctx, cfg, keys.last_user)
+            rec["data"]["threshold"] = cfg.cache.semantic_threshold
+            if vector is None:
+                rec["outcome"] = "skipped"
+                return None, None
+            try:
+                hit, best = await self.s.cache.get_semantic(
+                    keys.partition, vector, cfg.cache.semantic_threshold
+                )
+                if best is not None:
+                    rec["data"]["best_similarity"] = round(best, 4)
+                    ctx.similarity = round(best, 4)
+            except Exception as exc:  # Redis trouble: skip the cache, never fail the request
+                rec["outcome"] = "skipped"
+                rec["data"]["error"] = type(exc).__name__
+            if hit is not None:
+                rec["outcome"] = "hit"
+        return hit, vector
+
+    async def _coalesce(self, ctx: RequestContext, keys: CacheKeys) -> tuple[Flight, bool]:
+        s = self.s
         # -- coalescer
         async with self._stage(ctx, "coalescer") as rec:
             flight, leader = s.coalescer.join(keys.exact, ctx.id)
@@ -531,9 +586,14 @@ class Pipeline:
                     leader=flight.leader_id,
                     followers=len(flight.followers),
                 )
-        if not leader:
-            return await self._follow(ctx, cfg, flight)
+        return flight, leader
 
+    async def _check_and_route(
+        self, ctx: RequestContext, cfg: GatewayConfig, flight: Flight
+    ) -> Routed:
+        """The leader's last checks and the model call: content safety, then the router (slots,
+        breakers, hedging, chain retry). Any failure ends the flight so followers fail with it."""
+        s = self.s
         # -- content safety (Llama Guard 3): leader only, so followers share one verdict
         if cfg.safety.enabled:
             try:
@@ -574,7 +634,18 @@ class Pipeline:
             await flight.finish(exc)
             s.coalescer.release(flight)
             raise
+        return routed
 
+    def _start_stream(
+        self,
+        ctx: RequestContext,
+        cfg: GatewayConfig,
+        routed: Routed,
+        flight: Flight,
+        keys: CacheKeys,
+        vector: Any,
+    ) -> Prepared:
+        s = self.s
         backend = routed.attempt.rt.name
         flight.info = {"backend": backend, "ttft_ms": routed.ttft_ms}
         flight.started.set()
@@ -784,7 +855,7 @@ class Pipeline:
         s.bus.publish("stage.enter", ctx.id, stage="relay")
         relay_span = telemetry.tracer().start_span(
             "aegis.relay",
-            context=telemetry.trace.set_span_in_context(ctx.root),
+            context=trace.set_span_in_context(ctx.root),
             attributes={"aegis.stage": "relay", "aegis.backend": backend},
         )
         t0 = time.perf_counter()

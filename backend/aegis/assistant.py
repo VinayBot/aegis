@@ -377,16 +377,16 @@ If the context does not contain the answer, reply exactly: "{no_answer}"
 """
 
 
-async def answer(
-    state: AppState, question: str, history: list[dict[str, str]], no_cache: bool = False
-) -> AsyncIterator[dict[str, Any]]:
+async def _retrieve(state: AppState, question: str) -> tuple[list[dict[str, Any]], str, bool]:
+    """The cited sources, the numbered context for the model, and whether live state was added
+    (an empty context means the question is not grounded: the assistant declines)."""
     index: DocsIndex = state.docs_index  # type: ignore[attr-defined]
     hits = await index.search(question, k=4)
-    relevant = [(c, s) for c, s, ok in hits if ok]
+    relevant = [(c, sim) for c, sim, ok in hits if ok]
     wants_live = bool(LIVE_PATTERNS.search(question))
-    sources = [
-        {"n": i + 1, "source": c.source, "heading": c.heading, "score": round(s, 3)}
-        for i, (c, s) in enumerate(relevant)
+    sources: list[dict[str, Any]] = [
+        {"n": i + 1, "source": c.source, "heading": c.heading, "score": round(sim, 3)}
+        for i, (c, sim) in enumerate(relevant)
     ]
     context = "\n\n".join(
         f"[{i + 1}] ({c.source} > {c.heading})\n{c.text}" for i, (c, _) in enumerate(relevant)
@@ -401,7 +401,14 @@ async def answer(
                 "score": None,
             }
         )
-    grounded = bool(relevant) or wants_live
+    return sources, context.strip(), wants_live
+
+
+async def answer(
+    state: AppState, question: str, history: list[dict[str, str]], no_cache: bool = False
+) -> AsyncIterator[dict[str, Any]]:
+    sources, context, wants_live = await _retrieve(state, question)
+    grounded = bool(context)
     yield {"type": "sources", "sources": sources, "grounded": grounded}
 
     if grounded:

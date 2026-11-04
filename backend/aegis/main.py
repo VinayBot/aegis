@@ -93,6 +93,105 @@ def _harden(settings: Settings) -> Settings:
     return settings
 
 
+def _check_keys(settings: Settings, state: AppState) -> None:
+    cfg = state.config.get()
+    plaintext = security.plaintext_keys(cfg)
+    if plaintext and not security.plaintext_allowed(settings):
+        log.error(
+            "plaintext API keys in the gateway YAML are ignored in production; store them "
+            "as sha256: entries (or set AEGIS_ALLOW_PLAINTEXT_KEYS=1 for a local demo)",
+            extra={"ignored_key_ids": plaintext},
+        )
+    # ledgers from before key ids hold raw keys: replace them with the public ids
+    state.ledger.remap_key_ids(
+        {entry: k.id for entry, k in cfg.keys.items() if not entry.startswith("sha256:")}
+    )
+
+
+def _warm_safety(state: AppState) -> None:
+    """Load Llama Guard now, so the first request is not a cold start."""
+    sc = state.config.get().safety
+    if sc.enabled:
+        warm = state.safety.classify(sc.base_url, sc.model, [{"role": "user", "content": "hi"}], 10)
+        state.safety_warmup = asyncio.get_running_loop().create_task(warm)  # type: ignore[attr-defined]
+
+
+def _announce(settings: Settings, state: AppState, doc_chunks: int) -> None:
+    if settings.chaos_enabled:
+        log.warning("CHAOS ENABLED: fault injection endpoints are live (dev only)")
+    if settings.is_dev:
+        log.warning("AEGIS_ENV=dev: loopback callers act as the local operator (admin)")
+    log.info(
+        "AEGIS %s ready: %d backends, %d doc chunks",
+        __version__,
+        len(state.router.runtimes),
+        doc_chunks,
+    )
+
+
+def _add_ops_routes(app: FastAPI) -> None:
+    """Liveness, readiness and Prometheus."""
+
+    @app.get("/healthz", summary="Liveness: the process and its event loop respond", tags=["ops"])
+    async def healthz() -> dict[str, object]:
+        return {"status": "alive", "version": __version__}
+
+    @app.get(
+        "/readyz",
+        summary="Readiness: config loaded and at least one backend can serve",
+        tags=["ops"],
+        responses={503: {"description": "not ready: no backend can serve"}},
+    )
+    async def readyz(request: Request) -> JSONResponse:
+        state: AppState = request.app.state.state
+        backends = {
+            n.split(":", 1)[1]: c["ok"] for n, c in state.health.items() if n.startswith("backend:")
+        }
+        usable = [
+            n
+            for n, ok in backends.items()
+            if ok
+            and n in state.router.runtimes
+            and state.router.runtimes[n].breaker.current_state() != "open"
+        ]
+        # a bad hot-reload is reported but does not fail readiness: the last good config serves
+        ready = bool(usable)
+        body = {
+            "status": "ready" if ready else "not_ready",
+            "usable_backends": usable,
+            "redis": "ok" if state.redis_ok else "degraded (caches skipped, local rate limits)",
+            "config_error": state.config.last_error,
+        }
+        return JSONResponse(body, 200 if ready else 503)
+
+    @app.get(
+        "/metrics",
+        summary="Prometheus metrics (text exposition format)",
+        tags=["ops"],
+        dependencies=[Depends(security.require_admin)],
+        response_class=Response,
+    )
+    async def prometheus(request: Request) -> Response:
+        state: AppState = request.app.state.state
+        body = state.prom.render(state.router.runtimes)  # type: ignore[attr-defined]
+        return Response(body, media_type=CONTENT_TYPE_LATEST)
+
+
+def _mount_site(app: FastAPI, settings: Settings) -> None:
+    """`make serve` and the container: the built site from the same origin."""
+    dist = Path(settings.project_dir) / "frontend" / "dist"
+    if not dist.exists():
+        return
+    app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
+
+    @app.get("/{path:path}", include_in_schema=False)
+    async def spa(path: str) -> FileResponse:
+        candidate = dist / path
+        if path and candidate.is_file() and dist in candidate.resolve().parents:
+            return FileResponse(candidate)
+        return FileResponse(dist / "index.html")
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = _harden(settings or get_settings())
 
@@ -105,18 +204,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             langfuse=telemetry.langfuse_target(settings) if settings.tracing_enabled else None,
         )
         state = build_state(settings)
-        cfg = state.config.get()
-        plaintext = security.plaintext_keys(cfg)
-        if plaintext and not security.plaintext_allowed(settings):
-            log.error(
-                "plaintext API keys in the gateway YAML are ignored in production; store them "
-                "as sha256: entries (or set AEGIS_ALLOW_PLAINTEXT_KEYS=1 for a local demo)",
-                extra={"ignored_key_ids": plaintext},
-            )
-        # ledgers from before key ids hold raw keys: replace them with the public ids
-        state.ledger.remap_key_ids(
-            {entry: k.id for entry, k in cfg.keys.items() if not entry.startswith("sha256:")}
-        )
+        _check_keys(settings, state)
         prom = PromMetrics(state.bus)
         state.prom = prom  # type: ignore[attr-defined]
         app.state.state = state
@@ -137,25 +225,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await monitor.check_all()
         monitor.start()
         system_events = asyncio.get_running_loop().create_task(_record_system_events(state))
-        if cfg.safety.enabled:  # load Llama Guard now, so the first request is not a cold start
-            sc = cfg.safety
-            warm = state.safety.classify(
-                sc.base_url, sc.model, [{"role": "user", "content": "hi"}], 10
-            )
-            state.safety_warmup = asyncio.get_running_loop().create_task(warm)  # type: ignore[attr-defined]
+        _warm_safety(state)
         docs = DocsIndex(state)
         state.docs_index = docs  # type: ignore[attr-defined]
         await asyncio.to_thread(docs.build, app.openapi())
-        if settings.chaos_enabled:
-            log.warning("CHAOS ENABLED: fault injection endpoints are live (dev only)")
-        if settings.is_dev:
-            log.warning("AEGIS_ENV=dev: loopback callers act as the local operator (admin)")
-        log.info(
-            "AEGIS %s ready: %d backends, %d doc chunks",
-            __version__,
-            len(state.router.runtimes),
-            len(docs.chunks),
-        )
+        _announce(settings, state, len(docs.chunks))
         try:
             yield
         finally:
@@ -207,50 +281,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(control.router)
     app.include_router(control.ws_router)
 
-    # ---- probes and metrics (the site's catch-all route below must not shadow them)
-    @app.get("/healthz", summary="Liveness: the process and its event loop respond", tags=["ops"])
-    async def healthz() -> dict[str, object]:
-        return {"status": "alive", "version": __version__}
-
-    @app.get(
-        "/readyz",
-        summary="Readiness: config loaded and at least one backend can serve",
-        tags=["ops"],
-        responses={503: {"description": "not ready: no backend can serve"}},
-    )
-    async def readyz(request: Request) -> JSONResponse:
-        state: AppState = request.app.state.state
-        backends = {
-            n.split(":", 1)[1]: c["ok"] for n, c in state.health.items() if n.startswith("backend:")
-        }
-        usable = [
-            n
-            for n, ok in backends.items()
-            if ok
-            and n in state.router.runtimes
-            and state.router.runtimes[n].breaker.current_state() != "open"
-        ]
-        # a bad hot-reload is reported but does not fail readiness: the last good config serves
-        ready = bool(usable)
-        body = {
-            "status": "ready" if ready else "not_ready",
-            "usable_backends": usable,
-            "redis": "ok" if state.redis_ok else "degraded (caches skipped, local rate limits)",
-            "config_error": state.config.last_error,
-        }
-        return JSONResponse(body, 200 if ready else 503)
-
-    @app.get(
-        "/metrics",
-        summary="Prometheus metrics (text exposition format)",
-        tags=["ops"],
-        dependencies=[Depends(security.require_admin)],
-        response_class=Response,
-    )
-    async def prometheus(request: Request) -> Response:
-        state: AppState = request.app.state.state
-        body = state.prom.render(state.router.runtimes)  # type: ignore[attr-defined]
-        return Response(body, media_type=CONTENT_TYPE_LATEST)
+    _add_ops_routes(app)  # before the site's catch-all route, which must not shadow them
 
     @app.exception_handler(Exception)
     async def unhandled(_: Request, exc: Exception) -> JSONResponse:
@@ -259,17 +290,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {"error": {"message": f"internal error: {type(exc).__name__}", "code": "internal"}}, 500
         )
 
-    dist = Path(settings.project_dir) / "frontend" / "dist"
-    if dist.exists():  # `make serve`: the built site from the same origin
-        app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
-
-        @app.get("/{path:path}", include_in_schema=False)
-        async def spa(path: str) -> FileResponse:
-            candidate = dist / path
-            if path and candidate.is_file() and dist in candidate.resolve().parents:
-                return FileResponse(candidate)
-            return FileResponse(dist / "index.html")
-
+    _mount_site(app, settings)
     return app
 
 

@@ -208,79 +208,92 @@ async def ws_chat(ws: WebSocket) -> None:
     headers on a WebSocket). One request runs at a time per socket; open more sockets for more.
     """
     await ws.accept()
-    pipeline: Pipeline = ws.app.state.pipeline
-    key = security.bearer(ws.headers) or ws.query_params.get("key")
-    current: tuple[str, asyncio.Task[None]] | None = None
+    await _ChatSocket(ws).serve()
 
-    async def send(message: dict[str, Any]) -> None:
+
+class _ChatSocket:
+    """One /v1/ws/chat connection: at most one request at a time, cancellable mid-stream."""
+
+    def __init__(self, ws: WebSocket) -> None:
+        self.ws = ws
+        self.pipeline: Pipeline = ws.app.state.pipeline
+        self.key = security.bearer(ws.headers) or ws.query_params.get("key")
+        self.limit = ws.app.state.state.config.get().limits.max_body_bytes
+        self.current: tuple[str, asyncio.Task[None]] | None = None
+
+    async def send(self, message: dict[str, Any]) -> None:
         with contextlib.suppress(Exception):  # the client may already be gone
-            await ws.send_text(json.dumps(message, separators=(",", ":")))
+            await self.ws.send_text(json.dumps(message, separators=(",", ":")))
 
-    async def run(rid: str, body: dict[str, Any], no_cache: bool) -> None:
-        prepared = await pipeline.handle(body, key, no_cache=no_cache, client="websocket")
+    async def error(self, status: int, code: str, rid: str | None = None) -> None:
+        await self.send({"type": "error", "id": rid, "status": status, "error": {"code": code}})
+
+    @property
+    def busy(self) -> bool:
+        return self.current is not None and not self.current[1].done()
+
+    async def serve(self) -> None:
+        try:
+            while True:
+                await self.on_message(await self.ws.receive_text())
+        except WebSocketDisconnect:
+            pass
+        finally:
+            await self.cancel(notify=False)  # the client left: stop the model too
+
+    async def on_message(self, text: str) -> None:
+        if len(text) > self.limit:
+            return await self.error(413, "request_too_large")
+        try:
+            msg = json.loads(text)
+            kind, rid = msg.get("type"), str(msg.get("id") or "req")
+        except Exception:
+            return await self.error(400, "invalid_json")
+        if kind == "cancel":
+            return await self.cancel(notify=True)
+        if kind != "chat":
+            return None
+        if self.busy:
+            return await self.error(409, "busy", rid)
+        body = msg.get("body")
+        if not isinstance(body, dict):
+            return await self.error(400, "invalid_request", rid)
+        task = asyncio.ensure_future(self.run(rid, body, bool(msg.get("no_cache"))))
+        self.current = (rid, task)
+        return None
+
+    async def cancel(self, notify: bool) -> None:
+        if self.current is None or not self.busy:
+            return
+        rid, task = self.current
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
+        if notify:
+            await self.send({"type": "cancelled", "id": rid})
+
+    async def run(self, rid: str, body: dict[str, Any], no_cache: bool) -> None:
+        prepared = await self.pipeline.handle(body, self.key, no_cache=no_cache, client="websocket")
         if prepared.body is not None:
-            await send({"type": "error", "id": rid, "status": prepared.status, **prepared.body})
+            await self.send(
+                {"type": "error", "id": rid, "status": prepared.status, **prepared.body}
+            )
             return
         try:
-            await send({"type": "start", "id": rid, "headers": prepared.headers})
+            await self.send({"type": "start", "id": rid, "headers": prepared.headers})
             assert prepared.events is not None
             async for kind, payload in prepared.events:
                 if kind == "chunk":
-                    await send({"type": "chunk", "id": rid, "data": payload})
+                    await self.send({"type": "chunk", "id": rid, "data": payload})
                 elif kind == "error":
-                    await send({"type": "error", "id": rid, "status": 200, **payload})
+                    await self.send({"type": "error", "id": rid, "status": 200, **payload})
                 elif kind == "summary":
-                    await send({"type": "summary", "id": rid, "data": payload})
-            await send({"type": "done", "id": rid})
+                    await self.send({"type": "summary", "id": rid, "data": payload})
+            await self.send({"type": "done", "id": rid})
         finally:
             # cancelled between `start` and the first chunk: free the slot and the flight
             if prepared.abandon is not None:
                 await asyncio.shield(prepared.abandon())
-
-    limit = ws.app.state.state.config.get().limits.max_body_bytes
-    try:
-        while True:
-            text = await ws.receive_text()
-            if len(text) > limit:
-                await send({"type": "error", "status": 413, "error": {"code": "request_too_large"}})
-                continue
-            try:
-                msg = json.loads(text)
-                kind, rid = msg.get("type"), str(msg.get("id") or "req")
-            except Exception:
-                await send({"type": "error", "status": 400, "error": {"code": "invalid_json"}})
-                continue
-            if kind == "chat":
-                if current is not None and not current[1].done():
-                    await send(
-                        {"type": "error", "id": rid, "status": 409, "error": {"code": "busy"}}
-                    )
-                    continue
-                body = msg.get("body")
-                if not isinstance(body, dict):
-                    await send(
-                        {
-                            "type": "error",
-                            "id": rid,
-                            "status": 400,
-                            "error": {"code": "invalid_request"},
-                        }
-                    )
-                    continue
-                task = asyncio.ensure_future(run(rid, body, bool(msg.get("no_cache"))))
-                current = (rid, task)
-            elif kind == "cancel" and current is not None and not current[1].done():
-                current[1].cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await current[1]
-                await send({"type": "cancelled", "id": current[0]})
-    except WebSocketDisconnect:
-        pass
-    finally:
-        if current is not None and not current[1].done():
-            current[1].cancel()  # the client left: stop the model too
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await current[1]
 
 
 # ------------------------------------------------------------------ user feedback
