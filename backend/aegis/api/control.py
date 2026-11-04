@@ -35,8 +35,16 @@ async def health(request: Request) -> dict[str, Any]:
     s = _state(request)
     components = s.health
     worst = "up"
+    backends = s.config.get().backends
     for name, c in components.items():
-        if c["status"] == "down" and (name.startswith("backend:") or name in ("redis", "jaeger")):
+        optional = name.startswith("backend:") and getattr(
+            backends.get(name.split(":", 1)[1]), "optional", False
+        )
+        if (
+            c["status"] == "down"
+            and not optional
+            and (name.startswith("backend:") or name in ("redis", "jaeger"))
+        ):
             worst = "degraded"
     primary_ok = any(c["ok"] for n, c in components.items() if n.startswith("backend:"))
     if not primary_ok:

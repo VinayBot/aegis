@@ -154,6 +154,8 @@ def write_config(tmp: Path, ports: dict[str, int], **overrides: Any) -> Path:
         "breaker": {"error_threshold": 3, "open_seconds": 30},
         "chaos": {"auto_revert_seconds": 30},
         "limits": {},
+        "safety": {"enabled": False},
+        "output_guard": {"redact": True},
     }
     for key, value in overrides.items():
         section, _, field = key.partition("__")

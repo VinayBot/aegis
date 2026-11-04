@@ -160,6 +160,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await state.recorder.stop()
             await state.ledger.stop()
             await state.router.aclose()
+            await state.safety.aclose()
             if state.redis is not None:
                 await state.redis.aclose()
             state.ledger.close()

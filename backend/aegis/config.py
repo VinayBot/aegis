@@ -25,6 +25,10 @@ class BackendConfig(BaseModel):
     process: str | None = None
     provider: str = "openai"
     api_key: str | None = None
+    # read the upstream credential from this environment variable instead of the YAML
+    api_key_env: str | None = None
+    # an optional backend being down does not degrade overall health (vLLM, the LiteLLM proxy)
+    optional: bool = False
     defaults: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -65,6 +69,25 @@ class LimitsConfig(BaseModel):
     max_output_tokens: int = 4096
 
 
+class SafetyConfig(BaseModel):
+    """Llama Guard 3 content safety (aegis/guardrails/safety.py)."""
+
+    enabled: bool = False
+    base_url: str = "http://127.0.0.1:11434/v1"
+    model: str = "llama-guard3:1b"
+    timeout_ms: int = 1500
+    on_error: Literal["allow", "block"] = "allow"
+    check_output: bool = True
+    # block only when the classifier's P(unsafe) reaches this (see guardrails/safety.py)
+    unsafe_threshold: float = Field(default=0.9, ge=0.5, le=1.0)
+
+
+class OutputGuardConfig(BaseModel):
+    """Streaming redaction of emails, phones, card numbers and secrets in model output."""
+
+    redact: bool = True
+
+
 class CacheConfig(BaseModel):
     ttl_seconds: int = 86400
     semantic_threshold: float = 0.95
@@ -103,6 +126,8 @@ class GatewayConfig(BaseModel):
     breaker: BreakerConfig = Field(default_factory=BreakerConfig)
     chaos: ChaosConfig = Field(default_factory=ChaosConfig)
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
+    safety: SafetyConfig = Field(default_factory=SafetyConfig)
+    output_guard: OutputGuardConfig = Field(default_factory=OutputGuardConfig)
 
     def model_post_init(self, _: Any) -> None:
         for name, backend in self.backends.items():

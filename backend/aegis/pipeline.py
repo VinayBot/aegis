@@ -29,6 +29,7 @@ from aegis import guardrails, logcontext, security, telemetry
 from aegis.cache import CachedCompletion, CacheKeys, build_keys
 from aegis.coalesce import Flight
 from aegis.config import GatewayConfig, KeyConfig, Price
+from aegis.guardrails.output import StreamRedactor
 from aegis.retry import full_jitter
 from aegis.router import MidStreamError, NoBackendAvailable, Routed, UpstreamClientError
 from aegis.state import AppState
@@ -99,6 +100,23 @@ class Prepared:
 
 def price_of(price: Price, tokens_in: int, tokens_out: int) -> float:
     return tokens_in * price.input_per_1m / 1e6 + tokens_out * price.output_per_1m / 1e6
+
+
+def _redact_chunk(chunk: dict[str, Any], redactor: StreamRedactor) -> dict[str, Any]:
+    """The chunk with its text passed through the streaming output redactor."""
+    choices = chunk.get("choices")
+    if not choices:
+        return chunk
+    new = []
+    for choice in choices:
+        delta = dict(choice.get("delta") or {})
+        text = redactor.feed(delta.get("content") or "")
+        if choice.get("finish_reason"):
+            text += redactor.flush()
+        if "content" in delta or text:
+            delta["content"] = text
+        new.append({**choice, "delta": delta})
+    return {**chunk, "choices": new}
 
 
 def _has_tool_calls(chunk: dict[str, Any]) -> bool:
@@ -461,6 +479,15 @@ class Pipeline:
         if not leader:
             return await self._follow(ctx, cfg, flight)
 
+        # -- content safety (Llama Guard 3): leader only, so followers share one verdict
+        if cfg.safety.enabled:
+            try:
+                await self._safety_input(ctx, cfg)
+            except BaseException as exc:
+                await flight.finish(exc)
+                s.coalescer.release(flight)
+                raise
+
         # -- router (+ hedger) -> backend
         try:
             async with self._stage(ctx, "router") as rec:
@@ -548,6 +575,48 @@ class Pipeline:
                 extra={"prompt_tokens_est": tokens},
             )
 
+    async def _safety_input(self, ctx: RequestContext, cfg: GatewayConfig) -> None:
+        sc = cfg.safety
+        async with self._stage(ctx, "safety") as rec:
+            v = await self.s.safety.classify(
+                sc.base_url, sc.model, ctx.messages, sc.timeout_ms / 1000, sc.unsafe_threshold
+            )
+            rec["data"].update(classifier_ms=round(v.ms, 1), classifier=sc.model)
+            if v.p_unsafe is not None:
+                rec["data"]["p_unsafe"] = round(v.p_unsafe, 3)
+            if v.borderline:
+                rec["outcome"] = "borderline"
+                rec["data"]["categories"] = ",".join(v.categories)
+                self.s.bus.publish(
+                    "safety.borderline", ctx.id, categories=v.labels, p_unsafe=v.p_unsafe
+                )
+            if v.error:
+                rec["outcome"] = "skipped"
+                rec["data"]["error"] = v.error
+                ctx.root.set_attribute("aegis.safety.input", "skipped")
+                self.s.bus.publish("safety.skipped", ctx.id, error=v.error, policy=sc.on_error)
+                if sc.on_error == "block":
+                    raise GatewayError(
+                        503,
+                        "safety_unavailable",
+                        "The content-safety classifier is unavailable and this gateway fails "
+                        "closed.",
+                        retry_after=5,
+                    )
+                return
+            ctx.root.set_attribute("aegis.safety.input", "safe" if v.safe else "unsafe")
+            if not v.safe:
+                rec["outcome"] = "blocked"
+                rec["data"]["categories"] = ",".join(v.categories)
+                self.s.bus.publish("safety.block", ctx.id, categories=v.labels)
+                raise GatewayError(
+                    400,
+                    "unsafe_content",
+                    "Blocked by the content-safety guardrail (Llama Guard 3).",
+                    outcome="blocked",
+                    extra={"categories": v.labels},
+                )
+
     async def _route_with_retry(
         self, ctx: RequestContext, cfg: GatewayConfig, rec: dict[str, Any]
     ) -> Routed:
@@ -584,6 +653,36 @@ class Pipeline:
                 )
                 await asyncio.sleep(delay)
 
+    def _checked_cache_put(
+        self,
+        ctx: RequestContext,
+        cfg: GatewayConfig,
+        content: str,
+        keys: CacheKeys,
+        completion: CachedCompletion,
+        ttl: int,
+        vector: Any,
+    ) -> Any:
+        """Output safety, off the request path: an answer enters the cache only once Llama Guard
+        has classified the (prompt, answer) pair as safe, so an unsafe answer is never replayed."""
+        s, sc = self.s, cfg.safety
+        convo = [*ctx.messages, {"role": "assistant", "content": content}]
+
+        async def put() -> None:
+            v = await s.safety.classify(
+                sc.base_url, sc.model, convo, 2 * sc.timeout_ms / 1000, sc.unsafe_threshold
+            )
+            if not v.safe:
+                s.bus.publish("safety.output_flag", ctx.id, categories=v.labels)
+                return
+            if v.error:
+                s.bus.publish("safety.output_unchecked", ctx.id, error=v.error, policy=sc.on_error)
+                if sc.on_error == "block":
+                    return
+            await s.cache.put(keys, completion, ttl, vector)
+
+        return put
+
     # ------------------------------------------------------------------ streaming paths
 
     async def _lead(
@@ -601,6 +700,7 @@ class Pipeline:
         usage: dict[str, Any] | None = None
         finish: str | None = None
         tool_calls = False
+        redactor = StreamRedactor() if cfg.output_guard.redact else None
         status, error = "ok", None
         s.bus.publish("stage.enter", ctx.id, stage="relay")
         relay_span = telemetry.tracer().start_span(
@@ -610,9 +710,10 @@ class Pipeline:
         )
         t0 = time.perf_counter()
         try:
-            async for chunk in s.router.relay(routed):
-                if chunk.get("usage"):
-                    usage = chunk["usage"]
+            async for raw in s.router.relay(routed):
+                if raw.get("usage"):
+                    usage = raw["usage"]
+                chunk = _redact_chunk(raw, redactor) if redactor is not None else raw
                 text, fin = _delta_content(chunk)
                 parts.append(text)
                 finish = fin or finish
@@ -621,6 +722,12 @@ class Pipeline:
                 await flight.push(out)
                 if chunk.get("choices"):
                     yield "chunk", out
+            if redactor is not None and (tail := redactor.flush()):
+                # the stream ended without a finish chunk: release the held-back word
+                out = self._chunk(ctx, {"content": tail})
+                parts.append(tail)
+                await flight.push(out)
+                yield "chunk", out
             await flight.finish()
         except MidStreamError as exc:
             status, error = "midstream_error", str(exc)
@@ -667,6 +774,9 @@ class Pipeline:
                 if status == "ok" and content and not tool_calls
                 else None,
                 finish_reason=finish,
+                extra={"output_redactions": redactor.counts}
+                if redactor is not None and redactor.counts
+                else None,
             )
         yield "summary", summary
 
@@ -884,7 +994,12 @@ class Pipeline:
                 backend=backend or "?",
                 created=time.time(),
             )
-            s.recorder.submit(lambda: s.cache.put(keys, completion, ttl, vector))
+            if cfg.safety.enabled and cfg.safety.check_output:
+                s.recorder.submit(
+                    self._checked_cache_put(ctx, cfg, content, keys, completion, ttl, vector)
+                )
+            else:
+                s.recorder.submit(lambda: s.cache.put(keys, completion, ttl, vector))
             s.bus.publish("cache.write.queued", ctx.id, semantic=vector is not None)
         s.bus.publish("stage.enter", ctx.id, stage="ledger_queue")
         s.bus.publish("stage.exit", ctx.id, stage="ledger_queue", ms=0.0, outcome="queued")

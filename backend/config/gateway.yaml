@@ -34,7 +34,28 @@ backends:
     provider: litellm
     defaults: {temperature: 0.8, top_p: 0.9, max_tokens: 512}
 
-  # vllm-gpu:                        # adding vLLM is this one entry
+  litellm-proxy:
+    kind: openai                     # the real LiteLLM proxy server (infra/litellm/config.yaml)
+    label: LiteLLM proxy
+    base_url: http://127.0.0.1:4000/v1
+    model: llama3.2-3b               # LiteLLM's model_name; it routes to Ollama
+    api_key_env: LITELLM_MASTER_KEY  # the proxy's key comes from the environment, not this file
+    slots: 2
+    provider: litellm-proxy
+    optional: true
+    defaults: {temperature: 0.8, top_p: 0.9, max_tokens: 512}
+
+  vllm-metal:
+    kind: openai                     # real vLLM (V1 engine, paged attention, continuous batching)
+    label: vLLM (Metal)
+    base_url: http://127.0.0.1:8090/v1   # vllm serve ... via the vllm-metal plugin (scripts/dev.sh)
+    model: qwen2.5-0.5b              # --served-model-name; weights mlx-community/Qwen2.5-0.5B-Instruct-4bit
+    slots: 8                         # continuous batching: many requests share each forward pass
+    provider: vllm
+    optional: true
+    defaults: {temperature: 1.0, top_p: 1.0, max_tokens: 512}   # vLLM defaults (this snapshot ships no generation_config)
+
+  # vllm-gpu:                        # vLLM on a GPU box is this one entry
   #   kind: openai
   #   label: vLLM GPU
   #   base_url: http://gpu-box:8000/v1
@@ -54,6 +75,12 @@ models:
     price: {input_per_1m: 0.15, output_per_1m: 0.60, reference: gpt-4o-mini list price}
   aegis-litellm:
     chain: [litellm-ollama, ollama-llama]
+    price: {input_per_1m: 0.15, output_per_1m: 0.60, reference: gpt-4o-mini list price}
+  aegis-vllm:
+    chain: [vllm-metal, ollama-llama]
+    price: {input_per_1m: 0.15, output_per_1m: 0.60, reference: gpt-4o-mini list price}
+  aegis-litellm-proxy:
+    chain: [litellm-proxy, ollama-llama]
     price: {input_per_1m: 0.15, output_per_1m: 0.60, reference: gpt-4o-mini list price}
 
 # API keys. `id` is the public name used in logs, metrics, the ledger and the API; the key itself
@@ -75,6 +102,21 @@ limits:
   max_messages: 256
   max_prompt_tokens: 16000
   max_output_tokens: 4096
+
+# Llama Guard 3 (1B on Ollama): input checked on cache misses (leader only), output checked in the
+# background before an answer may be cached. ~110-150 ms warm. on_error: allow | block.
+safety:
+  enabled: true
+  base_url: http://127.0.0.1:11434/v1
+  model: llama-guard3:1b
+  timeout_ms: 1500
+  on_error: allow
+  check_output: true
+  unsafe_threshold: 0.9   # P(unsafe) to block; measured: false positives 0.50-0.69, hazards >= 0.986
+
+# Streaming output redaction: emails, phone numbers, Luhn-valid cards, API-key formats.
+output_guard:
+  redact: true
 
 cache:
   ttl_seconds: 86400

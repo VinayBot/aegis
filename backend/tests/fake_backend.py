@@ -77,6 +77,44 @@ async def _tool_stream(control: FakeControl) -> Any:
     control.completed += 1
 
 
+@dataclass
+class GuardControl:
+    """A fake Llama Guard: one verdict for prompts, one for (prompt, answer) pairs."""
+
+    input_verdict: str = "safe"
+    output_verdict: str = "safe"
+    p_unsafe: float | None = None  # when set, send OpenAI-style logprobs for the first token
+    status: int = 200
+    delay: float = 0.0
+    calls: int = 0
+    seen: list[list[dict[str, Any]]] = field(default_factory=list)
+
+
+def build_guard_app(control: GuardControl) -> Starlette:
+    async def chat(request: Request) -> JSONResponse:
+        body = await request.json()
+        control.calls += 1
+        control.seen.append(body["messages"])
+        await asyncio.sleep(control.delay)
+        if control.status != 200:
+            return JSONResponse({"error": {"message": "guard down"}}, control.status)
+        is_output = body["messages"][-1]["role"] == "assistant"
+        verdict = control.output_verdict if is_output else control.input_verdict
+        choice: dict[str, Any] = {"index": 0, "message": {"role": "assistant", "content": verdict}}
+        if control.p_unsafe is not None:
+            import math
+
+            p = control.p_unsafe
+            tops = [
+                {"token": "unsafe", "logprob": math.log(max(p, 1e-9))},
+                {"token": "safe", "logprob": math.log(max(1 - p, 1e-9))},
+            ]
+            choice["logprobs"] = {"content": [{"token": verdict.split()[0], "top_logprobs": tops}]}
+        return JSONResponse({"choices": [choice]})
+
+    return Starlette(routes=[Route("/v1/chat/completions", chat, methods=["POST"])])
+
+
 def build_app(control: FakeControl) -> Starlette:
     async def models(_: Request) -> JSONResponse:
         return JSONResponse({"object": "list", "data": [{"id": control.model, "object": "model"}]})

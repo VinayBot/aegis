@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Brings up the whole AEGIS system on one Mac and tears it down on Ctrl-C.
-#   Redis Stack + Jaeger (Docker via Colima) -> mlx_lm.server (primary) -> Ollama (fallback)
-#   -> the gateway (FastAPI, chaos enabled for the demo) -> the website (Vite)
+#   Redis Stack + Jaeger (Docker via Colima) -> mlx_lm.server (primary) -> Ollama (fallback,
+#   Llama Guard) -> LiteLLM proxy -> vLLM (Metal) -> the gateway (FastAPI, dev mode, chaos on)
+#   -> the website (Vite). The LiteLLM proxy and vLLM start when `make setup-serving` installed them.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RUN="$ROOT/var/run"
@@ -47,8 +48,27 @@ if ! curl -s -m 1 -o /dev/null http://127.0.0.1:11434/api/tags; then
   wait_for http://127.0.0.1:11434/api/tags "ollama" 30
 fi
 ollama list | grep -q "^${OLLAMA_MODEL}" || { say "pulling $OLLAMA_MODEL"; ollama pull "$OLLAMA_MODEL"; }
+ollama list | grep -q "^llama-guard3:1b" || { say "pulling llama-guard3:1b (content safety)"; ollama pull llama-guard3:1b; }
 # keep the fallback warm so the first failover is not a cold load
 curl -s http://127.0.0.1:11434/api/generate -d "{\"model\":\"$OLLAMA_MODEL\",\"keep_alive\":\"30m\"}" >/dev/null || true
+
+# 3b. the real LiteLLM proxy server (make setup-serving), one backend in a chain
+export LITELLM_MASTER_KEY="${LITELLM_MASTER_KEY:-sk-aegis-local}"   # local only; the gateway reads it from the env
+if [ -x "$HOME/.venv-litellm-proxy/bin/litellm" ] && ! curl -s -m 1 -o /dev/null http://127.0.0.1:4000/health/liveliness; then
+  say "starting the LiteLLM proxy on :4000"
+  LITELLM_TELEMETRY=False "$HOME/.venv-litellm-proxy/bin/litellm" --config "$ROOT/infra/litellm/config.yaml" \
+    --host 127.0.0.1 --port 4000 >"$LOG/litellm-proxy.log" 2>&1 & pids+=($!)
+  wait_for http://127.0.0.1:4000/health/liveliness "LiteLLM proxy" 60 || true
+fi
+
+# 3c. real vLLM (V1 engine, paged attention, continuous batching) on Metal via vllm-metal.
+#     A 0.5B model so it fits beside the other two on 16 GB; AEGIS_VLLM=0 skips it.
+if [ "${AEGIS_VLLM:-1}" = "1" ] && [ -x "$HOME/.venv-vllm-metal/bin/vllm" ] && ! curl -s -m 1 -o /dev/null http://127.0.0.1:8090/v1/models; then
+  say "starting vLLM (Metal) on :8090"
+  VLLM_NO_USAGE_STATS=1 DO_NOT_TRACK=1 "$HOME/.venv-vllm-metal/bin/vllm" serve mlx-community/Qwen2.5-0.5B-Instruct-4bit \
+    --host 127.0.0.1 --port 8090 --max-model-len 4096 --served-model-name qwen2.5-0.5b >"$LOG/vllm.log" 2>&1 & pids+=($!)
+  wait_for http://127.0.0.1:8090/v1/models "vLLM" 240 || true
+fi
 
 # 4. the gateway
 say "starting the gateway on :8000"

@@ -21,6 +21,7 @@ from aegis.coalesce import Coalescer
 from aegis.config import BackendConfig, ConfigStore
 from aegis.embedder import Embedder
 from aegis.events import EventBus
+from aegis.guardrails.safety import SafetyClassifier
 from aegis.ledger import Ledger
 from aegis.metrics import Metrics
 from aegis.ratelimit import RateLimiter
@@ -100,3 +101,4 @@ class AppState:
     redis_ok: bool = True
     health: dict[str, Any] = field(default_factory=dict)
     started_at: float = 0.0
+    safety: SafetyClassifier = field(default_factory=SafetyClassifier)

@@ -1,10 +1,24 @@
-.PHONY: perf sweep setup infra dev test test-backend test-frontend e2e lint typecheck build serve record-fixture memory assets clean
+# Pinned serving stacks, each in its own environment so their dependency trees never meet the gateway's.
+# vllm-metal v0.32.0 is two weeks old at the time of pinning; LiteLLM 1.80.0 predates the compromised
+# 1.82.7/1.82.8 releases.
+VLLM_WHEEL := https://github.com/vllm-project/vllm/releases/download/v0.32.0/vllm-0.32.0%2Bcpu-cp38-abi3-macosx_11_0_arm64.whl
+VLLM_METAL_WHEEL := https://github.com/vllm-project/vllm-metal/releases/download/v0.32.0/vllm_metal-0.32.0-cp312-cp312-macosx_15_0_arm64.whl
+
+.PHONY: perf sweep setup setup-serving evals loadtest infra dev test test-backend test-frontend e2e lint typecheck build serve record-fixture memory assets clean
 
 setup: ## install everything (Python deps, spaCy model, Node deps, Playwright browser, models)
 	cd backend && uv sync --extra litellm  # LiteLLM is the optional adapter; installed so it can be demonstrated
 	cd frontend && npm install && npx playwright install chromium
 	uv tool install --python 3.12 mlx-lm
 	ollama pull llama3.2:3b
+	ollama pull llama-guard3:1b   # content safety (input + output), ~110-150 ms per check
+	$(MAKE) setup-serving
+
+setup-serving: ## the real LiteLLM proxy and vLLM (Metal plugin), each in its own environment
+	uv venv $$HOME/.venv-litellm-proxy --python 3.12 --allow-existing -q
+	VIRTUAL_ENV=$$HOME/.venv-litellm-proxy uv pip install -q "litellm[proxy]==1.80.0"
+	uv venv $$HOME/.venv-vllm-metal --python 3.12 --allow-existing -q
+	VIRTUAL_ENV=$$HOME/.venv-vllm-metal uv pip install -q "$(VLLM_WHEEL)" "$(VLLM_METAL_WHEEL)"
 
 infra: ## Redis Stack + Jaeger only
 	docker-compose -f infra/docker-compose.yml up -d
@@ -35,7 +49,7 @@ build:
 	cd frontend && npm run build
 
 serve: build ## the built site served by the gateway itself on :8000
-	cd backend && AEGIS_CHAOS_ENABLED=1 uv run uvicorn aegis.main:app --port 8000
+	cd backend && AEGIS_ENV=dev AEGIS_CHAOS_ENABLED=1 uv run uvicorn aegis.main:app --port 8000
 
 record-fixture: ## record real traffic into the offline replay fixture (needs `make dev`)
 	cd backend && uv run python ../scripts/record_fixture.py

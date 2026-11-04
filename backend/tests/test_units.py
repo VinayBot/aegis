@@ -478,3 +478,76 @@ def test_access_rules() -> None:
     assert principal_for(dev, cfg, "wrong-key", "127.0.0.1") is None  # a bad key is never local
     assert cfg.keys["tenant-key"].id.startswith("key_")  # fingerprint, not the key
     assert "tenant-key" not in str(cfg.public_view())
+
+
+# ------------------------------------------------------------------ output guardrail (units)
+
+
+def test_stream_redactor_sees_a_value_split_across_chunks() -> None:
+    from aegis.guardrails.output import StreamRedactor
+
+    r = StreamRedactor()
+    pieces = ["Write to vin", "ay.sharma@exa", "mple.com or call +91 98", "76543210 today."]
+    out = "".join(r.feed(p) for p in pieces) + r.flush()
+    assert out == "Write to <EMAIL_ADDRESS> or call <PHONE_NUMBER> today."
+    assert r.counts == {"EMAIL_ADDRESS": 1, "PHONE_NUMBER": 1}
+
+
+def test_output_redaction_patterns_and_non_matches() -> None:
+    from aegis.guardrails.output import redact_text
+
+    counts: dict[str, int] = {}
+    text = (
+        "card 4111 1111 1111 1111, not-a-card 4111 1111 1111 1112, key sk-proj-abcdefghijklmnopqrstuvwx, "
+        "aws AKIAABCDEFGHIJKLMNOP, US (415) 555-0123"
+    )
+    out = redact_text(text, counts)
+    assert "<CREDIT_CARD>" in out and "4111 1111 1111 1112" in out  # Luhn decides
+    assert "<SECRET>" in out and "sk-proj" not in out and "AKIA" not in out
+    assert "<PHONE_NUMBER>" in out
+    plain = (
+        "Redis 7.4 on port 6379, 127.0.0.1:8000, 2026-11-05, 30000 tpm, version 3.12, 1500 tokens"
+    )
+    assert redact_text(plain) == plain
+
+
+def test_stream_redactor_never_holds_a_long_run_forever() -> None:
+    from aegis.guardrails.output import MAX_HOLD, StreamRedactor
+
+    r = StreamRedactor()
+    released = r.feed("x" * (MAX_HOLD + 10))
+    assert len(released) == MAX_HOLD + 10
+
+
+def test_llama_guard_output_parsing() -> None:
+    from aegis.guardrails.safety import parse
+
+    assert parse("safe") == (True, [])
+    assert parse("\nunsafe\nS1,S10\n") == (False, ["S1", "S10"])
+    with pytest.raises(ValueError):
+        parse("maybe")
+
+
+def test_stream_redactor_keeps_words_whole() -> None:
+    from aegis.guardrails.output import StreamRedactor
+
+    r = StreamRedactor()
+    assert r.feed("pong0 ") == "pong0 "  # a digit ending a word is not a number to hold back
+    assert r.feed("call 98 ") == "call "  # a number-like word is held until the next word
+    assert r.feed("later ") == "98 later "
+
+
+def test_p_unsafe_from_logprobs() -> None:
+    import math
+
+    from aegis.guardrails.safety import p_unsafe_of
+
+    def choice(p: float) -> dict[str, object]:
+        tops = [
+            {"token": "unsafe", "logprob": math.log(p)},
+            {"token": "safe", "logprob": math.log(1 - p)},
+        ]
+        return {"logprobs": {"content": [{"token": "unsafe", "top_logprobs": tops}]}}
+
+    assert abs((p_unsafe_of(choice(0.692)) or 0) - 0.692) < 1e-6
+    assert p_unsafe_of({"message": {"content": "safe"}}) is None  # no logprobs: label decides
