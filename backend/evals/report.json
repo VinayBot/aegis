@@ -10,7 +10,7 @@
     },
     "failures": [],
     "passed": true,
-    "seconds": 0.36
+    "seconds": 0.41
   },
   {
     "name": "pii",
@@ -32,7 +32,7 @@
       }
     ],
     "passed": true,
-    "seconds": 0.48
+    "seconds": 0.58
   },
   {
     "name": "injection",
@@ -75,6 +75,6 @@
     },
     "failures": [],
     "passed": true,
-    "seconds": 1.33
+    "seconds": 2.69
   }
 ]

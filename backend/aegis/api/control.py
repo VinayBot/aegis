@@ -506,7 +506,21 @@ DOC_TITLES = {
     "SKILLS_REVIEW.md": "Skills review",
     "VALIDATION_REPORT.md": "Validation report",
     "PLAN.md": "Plan",
+    "PRODUCTION_READINESS.md": "Production readiness",
+    "PEER_AUDIT.md": "Peer audit",
+    "LEARNING.md": "Learning guide",
+    "SECURITY.md": "Security",
+    "CHANGELOG.md": "Changelog",
+    "CONTRIBUTING.md": "Contributing",
 }
+ROOT_DOCS = (
+    "README.md",
+    "LEARNING.md",
+    "DESIGN.md",
+    "SECURITY.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+)
 
 
 @router.get("/docs", summary="Project documents")
@@ -514,7 +528,7 @@ async def docs(request: Request) -> list[dict[str, Any]]:
     s = _state(request)
     root = s.settings.project_dir
     out = []
-    for path in [root / "README.md", root / "DESIGN.md", *sorted(s.settings.docs_dir.glob("*.md"))]:
+    for path in [*(root / n for n in ROOT_DOCS), *sorted(s.settings.docs_dir.glob("*.md"))]:
         if path.exists():
             out.append(
                 {

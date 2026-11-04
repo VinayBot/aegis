@@ -227,14 +227,15 @@ test("playground: the WebSocket transport streams an answer through the same pip
 });
 
 test("playground: Stop cancels the model call mid-answer over the WebSocket", async ({ page }) => {
-  const prompt = `Count slowly from 1 to 200, one number per line. (stop e2e ${Date.now()})`;
+  // a prompt every local model answers at length (a 3B model sometimes refuses odd counting tasks)
+  const prompt = `Write a long, cheerful story about a robot who learns to cook, at least 300 words. (stop e2e ${Date.now()})`;
   await page.goto("/playground");
   await page.getByLabel("Prompt").fill(prompt);
   await page.getByLabel("WebSocket").check();
   await page.getByLabel("Bypass cache (Cache-Control: no-cache)").check();
   await page.getByRole("button", { name: "Send", exact: true }).click();
   const run = page.locator("article", { hasText: prompt }).first();
-  await expect(run.locator("p.whitespace-pre-wrap")).toContainText(/\d/, { timeout: 90_000 });
+  await expect(run.locator("p.whitespace-pre-wrap")).toContainText(/\w{3}/, { timeout: 90_000 });
   await page.getByRole("button", { name: "Stop" }).click();
   await expect(run.getByText(/Stopped mid-answer over the WebSocket/)).toBeVisible({ timeout: 15_000 });
 });

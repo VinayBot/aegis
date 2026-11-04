@@ -820,3 +820,26 @@ Do these with `make dev` running. Keep the Architecture page open in another win
 - `docs/DECISIONS.md`: why each choice was made, and what was rejected.
 - `docs/DEMO_SCRIPT.md`: an 8-minute walkthrough to present the project.
 - `docs/VALIDATION_REPORT.md`: every requirement with its honest pass or fail.
+
+
+---
+
+## Bonus chapter: from demo to production (added 2026-11-05)
+
+The first version worked; this pass made it safe to run for other people. Read these in order:
+
+1. **Secure by default** (`backend/aegis/security.py`). The gateway starts in production mode
+   unless told otherwise. A key is checked in constant time and only its public id travels any
+   further. Tenants can only read their own requests, enforced in the SQL itself.
+2. **Bounded input** (`pipeline._check_limits`, `api/gateway._read_body`). Before any expensive
+   work, the body size, message count and token counts are checked, with a clear error for each.
+3. **Two more guardrails.** Llama Guard 3 judges whether a prompt (and later the answer) is
+   harmful, but only blocks when it is confident (`guardrails/safety.py`). The output guard hides
+   emails, phone numbers, card numbers and secrets the model writes, even when a value arrives
+   split across two chunks (`guardrails/output.py`).
+4. **Real serving engines.** vLLM and the LiteLLM proxy are real servers behind the same YAML
+   chains; nothing in the gateway changed to add them.
+5. **Seeing everything.** `/metrics` for Prometheus, JSON logs with the trace id in every line,
+   and the same traces in Langfuse when it is running.
+6. **Proving it.** `backend/evals/` scores the gateway's own judgements against labelled examples;
+   CI fails if any of them gets worse. `docs/PRODUCTION_READINESS.md` collects the evidence.

@@ -94,3 +94,13 @@ describe("no invented data", () => {
 });
 
 vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
+
+import { repoUrl } from "../pages/Docs";
+
+describe("doc links to source files", () => {
+  it("resolve from the document's own folder to the file on GitHub", () => {
+    expect(repoUrl("backend/aegis/router.py", "README.md")).toBe("https://github.com/VinayBot/aegis/blob/main/backend/aegis/router.py");
+    expect(repoUrl("evidence/loadtest.json", "PRODUCTION_READINESS.md")).toBe("https://github.com/VinayBot/aegis/blob/main/docs/evidence/loadtest.json");
+    expect(repoUrl("../Dockerfile", "ARCHITECTURE.md")).toBe("https://github.com/VinayBot/aegis/blob/main/Dockerfile");
+  });
+});

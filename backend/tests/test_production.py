@@ -103,7 +103,14 @@ async def test_raw_api_keys_never_leave_the_gateway(gateway: Gateway) -> None:
     c = gateway.client
     bodies = [
         (await c.get(path)).text
-        for path in ("/api/config", "/api/tenants", "/api/requests", "/api/metrics")
+        for path in (
+            "/api/config",
+            "/api/tenants",
+            "/api/requests",
+            "/api/metrics",
+            "/api/architecture",
+            "/api/events/recent",
+        )
     ]
     for body in bodies:
         assert "k-demo" not in body and "k-admin" not in body and "aegis-demo-key" not in body

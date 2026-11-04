@@ -256,7 +256,10 @@ def build(state: AppState) -> dict[str, Any]:
         )
 
     stage_configs = {
-        "ratelimit": {"keys": {k: {"tenant": v.tenant, "tpm": v.tpm} for k, v in cfg.keys.items()}},
+        # keys by their public id: the raw key never leaves aegis.security
+        "ratelimit": {
+            "keys": {v.id: {"tenant": v.tenant, "tpm": v.tpm} for v in cfg.keys.values()}
+        },
         "budget": {"tenants": {v.tenant: v.budget.model_dump() for v in cfg.keys.values()}},
         "exact_cache": {"ttl_seconds": cfg.cache.ttl_seconds},
         "safety": cfg.safety.model_dump(),
