@@ -171,9 +171,48 @@ def test_plain_text_is_untouched() -> None:
 
 @pytest.mark.parametrize(
     "text",
-    ["What happens when Redis is down?", "Does Ollama or LiteLLM serve Qwen?", "Is Jaeger up?"],
+    [
+        "What happens when Redis is down?",
+        "Does Ollama or LiteLLM serve Qwen?",
+        "Is Jaeger up?",
+        "It runs entirely on one Mac with Redis Stack.",
+        "Open the Playground, then the Chaos Lab.",
+        "The bucket is updated atomically in Lua.",
+        "Clients call one OpenAI-compatible endpoint.",
+    ],
 )
 def test_stack_names_are_not_people(text: str) -> None:
+    assert pii.redact(text).counts == {}
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "my name is vinay and vinaysharma@gmail is my email",
+            "my name is <PERSON> and <EMAIL_ADDRESS> is my email",
+        ),
+        ("My name is Vinay Sharma from Delhi", "My name is <PERSON> from Delhi"),
+        ("im rahul, mail me at rahul@yahoo", "im <PERSON>, mail me at <EMAIL_ADDRESS>"),
+        ("call me priya please", "call me <PERSON> please"),
+    ],
+)
+def test_self_introduced_names_and_short_emails_are_redacted(text: str, expected: str) -> None:
+    """Lower-case names after "my name is", and an address typed without its ".com"."""
+    assert pii.redact(text).text == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I am fine, thanks",
+        "this is great",
+        "I am going to use Redis",
+        "My name is Redis Stack",
+        "install @types/node and use @app.get decorators",
+    ],
+)
+def test_naming_phrases_without_a_name_are_untouched(text: str) -> None:
     assert pii.redact(text).counts == {}
 
 

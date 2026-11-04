@@ -14,7 +14,7 @@ mobile (target 85), and every scenario runs at 60 fps or more. Known limits:
 
 | Suite | Command | Result |
 | --- | --- | --- |
-| Backend unit + HTTP integration + SIGSTOP | `make test-backend` | **64 passed** (50 s) |
+| Backend unit + HTTP integration + SIGSTOP | `make test-backend` | **78 passed** (49 s) |
 | Lint and format (backend) | `uv run ruff check .`, `ruff format --check .` | **pass** |
 | Types (backend) | `uv run mypy aegis` | **pass** (no issues in 34 files) |
 | Types (frontend) | `npx tsc -b` | **pass** |
@@ -238,6 +238,30 @@ Two fixes:
 Three tests cover this; the pause test fails without the fix. Checked on the real system: freezing
 MLX, then reviving it with no traffic, closed the breaker on its own after 31 s (30 s cool-down plus
 one probe). The backend suite now has 64 tests.
+
+## Found in the pre-demo check (2026-11-04)
+
+A full rehearsal of the demo on the live system found three problems, all fixed:
+- **The PII guardrail hid the project's own words.** "Mac", "Redis Stack", "Lua", "OpenAI",
+  "Playground" and "Chaos Lab" were tagged as people. The assistant's doc excerpts pass through
+  the gateway, so it answered "AEGIS runs on a single <PERSON>". These words are now known
+  non-names; a real name beside them is still redacted.
+- **The assistant could not say what just happened.** Asked "What just happened to the primary?"
+  after a crash, it replied "[1]": the demo script quotes that exact question, so the 3B model
+  cited it. The demo script is no longer indexed, and live answers now start with a plain
+  timeline of the last 10 minutes of chaos actions and breaker changes.
+- **The crash scenario's last line could be wrong.** The health monitor sometimes probes the
+  revived primary first, and a hedge can let the fallback answer the scenario's own request. The
+  line said "Probe served by ollama-llama". It now reports only what is certain.
+
+- **A name and email typed casually got through.** "my name is vinay and vinaysharma@gmail is my
+  email" reached the model unchanged, and the model completed the address. The email pattern
+  needed a ".com"-style ending, and names had to be capitalised (spaCy also misses a lone first
+  name). An address without its ending is now redacted. So is a name after "my name is" or
+  "call me", in any case. After "I am" or "this is", only a known given name counts, so
+  "I am fine" stays untouched.
+
+Fourteen tests were added. The backend suite now has 78 tests, and all 16 e2e tests pass.
 
 ## Not done or changed from the spec
 

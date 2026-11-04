@@ -385,6 +385,28 @@ async def test_assistant_settings_facts_follow_the_config(gateway: Gateway) -> N
     assert "If Redis is down" in text
 
 
+async def test_assistant_live_facts_tell_what_just_happened(gateway: Gateway) -> None:
+    """After a chaos kill the assistant gets a plain timeline, primary named, oldest first."""
+    from aegis.assistant import live_facts, recent_events
+
+    state = gateway.state
+    state.chaos.apply("primary", "kill", True)
+    state.router.runtimes["primary"].breaker.force("open", "3 consecutive errors")
+    state.chaos.apply("primary", "kill", None)
+    for _ in range(50):
+        if any(b["state"] == "open" for b in state.metrics.breaker_history):
+            break
+        await asyncio.sleep(0.02)
+    events = recent_events(state)
+    text = " ".join(events)
+    assert "killed the primary (primary)" in text
+    assert "breaker on the primary (primary) opened" in text
+    assert "the primary (primary) was revived" in text
+    assert text.index("killed") < text.index("revived")
+    facts = live_facts(state)
+    assert facts.index("What happened in the last") < facts.index("Settings:")
+
+
 async def test_idle_half_open_breaker_heals_with_one_real_probe(
     gateway: Gateway, fakes: dict[str, FakeControl]
 ) -> None:

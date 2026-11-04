@@ -28,6 +28,8 @@ API_KEY = "aegis-assistant-key"
 MODEL = "aegis-chat"
 MIN_SIMILARITY = 0.58
 NO_ANSWER = "The project docs don't cover that, so I won't guess."
+SKIP_DOCS = frozenset({"DEMO_SCRIPT.md"})
+RECENT_WINDOW_S = 600
 
 LIVE_PATTERNS = re.compile(
     r"\b(right now|currently|current|live|is the|are the|healthy|health|status|hit rate|"
@@ -75,7 +77,9 @@ class DocsIndex:
     def sources(self) -> list[Path]:
         root = self.s.settings.project_dir
         paths = [root / "README.md", root / "DESIGN.md", self.s.settings.config_path]
-        paths += sorted(self.s.settings.docs_dir.glob("*.md"))
+        # DEMO_SCRIPT.md is the presenter's script: it quotes the demo questions word for word,
+        # so a small model asked one of them cites the script instead of answering.
+        paths += sorted(p for p in self.s.settings.docs_dir.glob("*.md") if p.name not in SKIP_DOCS)
         return [p for p in paths if p.exists()]
 
     def build(self, openapi: dict[str, Any] | None = None) -> int:
@@ -150,11 +154,84 @@ def settings_facts(state: AppState) -> str:
     )
 
 
-def live_facts(state: AppState) -> str:
-    lines = [settings_facts(state)]
+def _roles(state: AppState) -> dict[str, str]:
     models = state.config.get().models
     chain = models[MODEL].chain if MODEL in models else []
-    roles = {f"backend:{b}": ("primary" if i == 0 else "fallback") for i, b in enumerate(chain)}
+    return {b: ("primary" if i == 0 else "fallback") for i, b in enumerate(chain)}
+
+
+def _chaos_sentence(entry: dict[str, Any], who: str) -> str:
+    action = str(entry.get("action", ""))
+    auto = action.startswith("auto-revert ")
+    action = action.removeprefix("auto-revert ")
+    by = "automatically" if auto else "by the Chaos Lab"
+    if action == "kill":
+        how = (
+            "froze its process (SIGSTOP)"
+            if entry.get("mode") == "sigstop"
+            else ("made it refuse connections")
+        )
+        return f"the Chaos Lab killed {who}: it {how}, so it stopped answering"
+    if action == "clear kill":
+        return f"{who} was revived {by}"
+    if action == "latency":
+        return f"the Chaos Lab added {entry.get('value')} ms of latency to {who}"
+    if action == "clear latency":
+        return f"the injected latency on {who} was removed {by}"
+    if action == "error_rate":
+        return f"the Chaos Lab made {who} fail {float(entry.get('value') or 0):.0%} of requests"
+    if action == "clear error_rate":
+        return f"the injected errors on {who} were removed {by}"
+    return f"chaos action '{action}' on {who}"
+
+
+def _breaker_sentence(entry: dict[str, Any], who: str, open_s: float) -> str:
+    state, reason = entry.get("state"), str(entry.get("reason") or "")
+    if state == "open":
+        return (
+            f"the circuit breaker on {who} opened ({reason}); traffic skipped it for "
+            f"{open_s:g} seconds and went to the next backend"
+        )
+    if state == "half_open":
+        return f"the cool-down on {who} ended; its breaker went half-open, waiting for one probe"
+    if state == "closed" and "manual" in reason:
+        return f"the breaker on {who} was reset by hand and closed"
+    if state == "closed":
+        return f"a probe request to {who} succeeded and its breaker closed again: it is healthy"
+    return f"the breaker on {who} became {state}"
+
+
+def recent_events(state: AppState, window_s: float = RECENT_WINDOW_S) -> list[str]:
+    """Chaos actions and breaker changes in the last few minutes, oldest first, as sentences.
+
+    A 3B model cannot reliably assemble a story from raw event rows; it can retell a timeline.
+    """
+    roles = _roles(state)
+
+    def who(backend: str) -> str:
+        role = roles.get(backend)
+        return f"the {role} ({backend})" if role else backend
+
+    since = time.time() - window_s
+    open_s = state.config.get().breaker.open_seconds
+    items: list[tuple[float, str]] = []
+    for e in list(state.chaos.log):
+        if e.get("ts", 0) >= since:
+            items.append((e["ts"], _chaos_sentence(e, who(str(e.get("backend"))))))
+    for b in list(state.metrics.breaker_history):
+        if b.get("ts", 0) >= since:
+            items.append((b["ts"], _breaker_sentence(b, who(str(b.get("backend"))), open_s)))
+    items.sort(key=lambda it: it[0])
+    return [f"- {time.strftime('%H:%M:%S', time.localtime(ts))}: {text}." for ts, text in items]
+
+
+def live_facts(state: AppState) -> str:
+    events = recent_events(state)
+    minutes = RECENT_WINDOW_S // 60
+    lines = [f"What happened in the last {minutes} minutes, oldest first:"]
+    lines += events or [f"- Nothing: no chaos actions and no breaker changes in {minutes} minutes."]
+    lines.append("Current state:")
+    roles = {f"backend:{b}": r for b, r in _roles(state).items()}
     for name, h in sorted(state.health.items()):
         extra = f", breaker {h['breaker']}" if "breaker" in h else ""
         role = f" (the {roles[name]})" if name in roles else ""
@@ -165,11 +242,6 @@ def live_facts(state: AppState) -> str:
         f"- last 5 min: {k['requests']} requests, cache hit rate {hit}, "
         f"TTFT p95 {k['ttft_p95_ms'] or 'n/a'} ms"
     )
-    for b in list(state.metrics.breaker_history)[-4:]:
-        lines.append(
-            f"- breaker event {time.strftime('%H:%M:%S', time.localtime(b['ts']))}: "
-            f"{b['backend']} -> {b['state']} ({b['reason']})"
-        )
     recent = [r for r in state.metrics.recent_requests if r.get("tenant") != "aegis-bot"][:3]
     for r in recent:
         lines.append(
@@ -177,6 +249,7 @@ def live_facts(state: AppState) -> str:
             f"backend {r['backend']}, failovers {r['failovers']}, hedged {bool(r['hedged'])}, "
             f"latency {r['latency_ms']} ms" + (f", error {r['error']}" if r.get("error") else "")
         )
+    lines += ["Settings:", settings_facts(state)]
     return "\n".join(lines)
 
 

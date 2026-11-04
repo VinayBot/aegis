@@ -338,14 +338,18 @@ class ScenarioRunner:
             countdown_s=round(wait, 1),
         )
         await asyncio.sleep(wait + 0.3)
+        # Either this request or the health monitor's own probe tests the half-open breaker, and
+        # a hedge may let the fallback answer this request first: report only what is certain.
         r = await fire(self.s, f"In one sentence: {TOPICS[5]}. ({run_id})", no_cache=True)
-        self._say(
-            run_id,
-            name,
-            "heal",
-            f"Probe served by {r.get('backend')}; breaker is now {rt.breaker.current_state()}.",
-            result=_brief(r),
-        )
+        state = rt.breaker.current_state()
+        if state == "closed":
+            text = (
+                f"A probe to {primary} succeeded: its breaker is closed again. "
+                f"This request was served by {r.get('backend')}."
+            )
+        else:
+            text = f"Breaker on {primary}: {state}. This request was served by {r.get('backend')}."
+        self._say(run_id, name, "heal", text, result=_brief(r))
 
     async def _traffic_burst(self, run_id: str) -> None:
         name = "traffic_burst"
