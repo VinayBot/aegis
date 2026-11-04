@@ -75,6 +75,7 @@ fi
 say "starting the gateway on :8000"
 # AEGIS_ENV=dev: loopback callers are the local operator (the site needs no key) and chaos may run.
 # Without it the gateway is in production mode: admin key required, chaos refused.
+export AEGIS_JWT_SECRET="${AEGIS_JWT_SECRET:-$(openssl rand -hex 32)}"   # fresh per start: old tokens die
 (cd "$ROOT/backend" && AEGIS_ENV=dev AEGIS_CHAOS_ENABLED=1 uv run uvicorn aegis.main:app \
   --host 127.0.0.1 --port 8000 --timeout-graceful-shutdown 5 >"$LOG/gateway.log" 2>&1) &
 pids+=($!); echo $! >"$RUN/gateway.pid"

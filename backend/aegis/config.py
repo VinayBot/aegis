@@ -113,6 +113,9 @@ class RouterConfig(BaseModel):
 class BreakerConfig(BaseModel):
     error_threshold: int = 3
     open_seconds: float = 30.0
+    failure_rate: float = Field(default=0.5, gt=0.0, le=1.0)
+    window_seconds: float = 30.0
+    min_requests: int = 10
 
 
 class ChaosConfig(BaseModel):

@@ -13,7 +13,7 @@ backends:
     label: MLX primary
     base_url: http://${AEGIS_MODEL_HOST:-127.0.0.1}:8081/v1
     model: mlx-community/Qwen2.5-3B-Instruct-4bit
-    slots: 1                         # mlx_lm.server generates one request at a time
+    slots: 4                         # mlx-lm 0.32 batches; measured: x3.5 throughput at 4, flat beyond (make bench-serving)
     process: mlx                     # var/run/mlx.pid: lets the chaos lab SIGSTOP the real process
     provider: mlx
     # The provider's real defaults. They become part of the cache key when a client omits them.
@@ -138,7 +138,10 @@ router:
   retry_cap_ms: 2000
 
 breaker:
-  error_threshold: 3                 # consecutive errors that open the breaker
+  error_threshold: 3                 # consecutive errors that open the breaker (fast path)
+  failure_rate: 0.5                  # ...or this share of failures over the window
+  window_seconds: 30
+  min_requests: 10                   # ...once the window holds this many outcomes
   open_seconds: 30
 
 chaos:

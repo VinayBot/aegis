@@ -152,7 +152,10 @@ function Drawer({ node, onClose }: { node: ArchNode; onClose: () => void }) {
         {node.breaker && (
           <div>
             <dt className="text-ink-mute">breaker</dt>
-            <dd className="font-semibold text-ink">{node.breaker.state.replace("_", "-")} · {node.breaker.trips} trips</dd>
+            <dd className="font-semibold text-ink">
+              {node.breaker.state.replace("_", "-")} · {node.breaker.trips} trips
+              {node.breaker.window_failure_rate != null && ` · ${Math.round(node.breaker.window_failure_rate * 100)}% failing (trips at ${Math.round((node.breaker.failure_rate_threshold ?? 0.5) * 100)}%)`}
+            </dd>
           </div>
         )}
       </dl>

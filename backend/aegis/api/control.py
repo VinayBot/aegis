@@ -115,6 +115,8 @@ async def tenants(
                 "rate_limited": r.get("rate_limited", 0) or 0,
                 "saved_est_usd": r.get("saved_est_usd", 0.0),
                 "cost_est_usd": r.get("cost_est_usd", 0.0),
+                "feedback_up": r.get("feedback_up", 0),
+                "feedback_down": r.get("feedback_down", 0),
             }
         )
     return out

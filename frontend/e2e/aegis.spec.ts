@@ -266,3 +266,25 @@ test("ops: liveness, readiness and Prometheus metrics", async ({ request }) => {
   expect(metrics).toContain("aegis_requests_total");
   expect(metrics).toContain('aegis_breaker_state{backend="vllm-metal"}');
 });
+
+test("playground: rating an answer records it on the request's trace", async ({ page }) => {
+  const prompt = `Name one river. (feedback e2e ${Date.now()})`;
+  await page.goto("/playground");
+  await page.getByLabel("Prompt").fill(prompt);
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  const run = page.locator("article", { hasText: prompt }).first();
+  await run.getByRole("button", { name: "Good answer" }).click({ timeout: 90_000 });
+  await expect(run.getByText("Recorded on this request's trace.")).toBeVisible();
+  await expect(run.getByRole("button", { name: "Good answer" })).toHaveAttribute("aria-pressed", "true");
+});
+
+test("auth: an API key can be exchanged for a short-lived JWT that works on the data plane", async ({ request }) => {
+  const tok = await (await request.post(`${API}/v1/auth/token`, { headers: { authorization: "Bearer aegis-demo-key" } })).json();
+  expect(tok.token_type).toBe("bearer");
+  const r = await request.post(`${API}/v1/chat/completions`, {
+    headers: { authorization: `Bearer ${tok.access_token}` },
+    data: { model: "aegis-chat", max_tokens: 8, messages: [{ role: "user", content: `Say hi. (jwt e2e ${Date.now()})` }] },
+    timeout: 60_000,
+  });
+  expect(r.status()).toBe(200);
+});

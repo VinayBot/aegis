@@ -227,6 +227,9 @@ def build(state: AppState) -> dict[str, Any]:
                         "retry_after_s": round(rt.breaker.retry_after(), 1) if rt else 0,
                         "open_seconds": cfg.breaker.open_seconds,
                         "trips": rt.breaker.trips if rt else 0,
+                        # the share of failures in the breaker's rolling window (trips at >= 50%)
+                        "window_failure_rate": rt.breaker.window_failure_rate() if rt else None,
+                        "failure_rate_threshold": cfg.breaker.failure_rate,
                     },
                     "slots": {"capacity": rt.capacity, "in_flight": rt.in_flight} if rt else None,
                     "stats": {

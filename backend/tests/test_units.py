@@ -590,3 +590,82 @@ def test_a_secret_in_minified_json_is_caught_across_chunks() -> None:
         r = StreamRedactor()
         out = "".join(r.feed(body[i : i + size]) for i in range(0, len(body), size)) + r.flush()
         assert "sk-proj" not in out and '"key":"<SECRET>"' in out, size
+
+
+def test_breaker_opens_on_a_failure_rate_over_the_window() -> None:
+    """Failing every other request never makes three in a row, yet trips the 50% rule."""
+    now = [0.0]
+    b = Breaker("x", error_threshold=3, open_seconds=30, clock=lambda: now[0])
+    b.failure_rate, b.window_seconds, b.min_requests = 0.5, 30.0, 10
+    for i in range(9):
+        now[0] += 1
+        (b.record_error("5xx") if i % 2 else b.record_success())
+    assert b.current_state() == "closed"  # 9 outcomes: below min_requests
+    now[0] += 1
+    b.record_error("5xx")  # 10th outcome, 5 of 10 failed
+    assert b.current_state() == "open"
+    assert "failure rate 50%" in b.history[-1][2]
+
+
+def test_breaker_window_forgets_old_failures() -> None:
+    now = [0.0]
+    b = Breaker("x", error_threshold=3, open_seconds=30, clock=lambda: now[0])
+    b.failure_rate, b.window_seconds, b.min_requests = 0.5, 30.0, 10
+    for _ in range(2):
+        b.record_error("old")
+        b.record_success()
+    now[0] += 60  # those are outside the window now
+    for _ in range(9):
+        b.record_success()
+    b.record_error("new")
+    assert b.current_state() == "closed" and b.window_failure_rate() == 0.1
+
+
+def _docs_index(tmp_path: Path, texts: dict[str, str]) -> object:
+    from types import SimpleNamespace
+
+    from aegis.assistant import DocsIndex
+    from aegis.embedder import Embedder
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    for name, text in texts.items():
+        (docs / name).write_text(text)
+    cfg = tmp_path / "gateway.yaml"
+    cfg.write_text(
+        "backends: {b: {model: m}}\nmodels: {aegis-chat: {chain: [b]}}\n"
+        "keys: {k: {tenant: t, tpm: 1, budget: {soft: 1, hard: 2}}}\n"
+    )
+    from aegis.config import ConfigStore
+    from aegis.settings import Settings
+
+    settings = Settings(project_dir=tmp_path, docs_dir=docs, config_path=cfg)
+    state = SimpleNamespace(
+        settings=settings, embedder=Embedder(settings.embedder_model), config=ConfigStore(cfg)
+    )
+    index = DocsIndex(state)  # type: ignore[arg-type]
+    index.build()
+    return index
+
+
+async def test_hybrid_retrieval_finds_a_rare_term(tmp_path: Path) -> None:
+    """BM25 lifts the one chunk that names the rare term; fusion keeps it in the top results."""
+    index = _docs_index(
+        tmp_path,
+        {
+            "A.md": "# Coalescer\nThe coalescer merges identical requests in flight into one upstream call.",
+            "B.md": "# Weather\nIt rained in Pune all week and the roads flooded.",
+        },
+    )
+    hits = await index.search("What does the coalescer do?")  # type: ignore[attr-defined]
+    relevant = [c.source for c, _, ok in hits if ok]
+    assert relevant and relevant[0] == "docs/A.md"
+
+
+async def test_hybrid_retrieval_declines_off_topic_questions(tmp_path: Path) -> None:
+    index = _docs_index(
+        tmp_path,
+        {"A.md": "# Coalescer\nThe coalescer merges identical requests in flight into one call."},
+    )
+    hits = await index.search("Who painted the Mona Lisa?")  # type: ignore[attr-defined]
+    assert not [c for c, _, ok in hits if ok and c.source == "docs/A.md"]

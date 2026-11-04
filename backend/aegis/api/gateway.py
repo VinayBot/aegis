@@ -7,13 +7,15 @@ import contextlib
 import json
 import time
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from aegis import security
+from aegis import security, telemetry
+from aegis.feedback import push_langfuse_score
 from aegis.pipeline import Pipeline, Prepared
 
 router = APIRouter()
@@ -279,3 +281,101 @@ async def ws_chat(ws: WebSocket) -> None:
             current[1].cancel()  # the client left: stop the model too
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await current[1]
+
+
+# ------------------------------------------------------------------ user feedback
+
+
+class Feedback(BaseModel):
+    request_id: str = Field(min_length=4, max_length=64, pattern=r"^req_[0-9a-f]+$")
+    rating: Literal["up", "down"]
+    comment: str | None = Field(None, max_length=500)
+
+
+@router.post(
+    "/v1/feedback",
+    summary="Rate an answer (thumbs up or down): stored, metered, and sent to Langfuse as a score",
+)
+async def feedback(request: Request, body: Feedback) -> JSONResponse:
+    state = request.app.state.state
+    key_cfg = security.resolve_credential(
+        state.settings, state.config.get(), security.bearer(request.headers)
+    )
+    if key_cfg is None:
+        return JSONResponse(
+            {"error": {"message": "Unknown or missing API key.", "code": "invalid_api_key"}}, 401
+        )
+    await state.ledger.flush()  # the answer's row may still be in the write queue
+    # a tenant can only rate its own answers (an admin key can rate any)
+    tenant = None if key_cfg.role == "admin" else key_cfg.tenant
+    row = await state.ledger.get(body.request_id, tenant=tenant)
+    if row is None:
+        return JSONResponse({"error": {"message": "Unknown request id.", "code": "not_found"}}, 404)
+    value = 1 if body.rating == "up" else 0
+    await state.ledger.record_feedback(
+        body.request_id, row["tenant"], row.get("trace_id"), value, body.comment
+    )
+    state.bus.publish(
+        "feedback",
+        body.request_id,
+        rating=body.rating,
+        tenant=row["tenant"],
+        model=row.get("model"),
+        backend=row.get("backend"),
+        cache=row.get("cache"),
+    )
+    to_langfuse = telemetry.langfuse_target(state.settings) is not None and bool(
+        row.get("trace_id")
+    )
+    if to_langfuse:
+        trace_id, comment, settings = row["trace_id"], body.comment, state.settings
+        state.recorder.submit(lambda: push_langfuse_score(settings, trace_id, value, comment))
+    return JSONResponse(
+        {
+            "ok": True,
+            "request_id": body.request_id,
+            "rating": body.rating,
+            "trace_id": row.get("trace_id"),
+            "sent_to_langfuse": to_langfuse,
+        }
+    )
+
+
+# ------------------------------------------------------------------ token exchange
+
+
+class TokenRequest(BaseModel):
+    ttl_seconds: int | None = Field(None, ge=60, le=86_400)
+
+
+@router.post(
+    "/v1/auth/token",
+    summary="Exchange an API key for a short-lived JWT (for browsers and mobile apps)",
+)
+async def token(request: Request, body: TokenRequest | None = None) -> JSONResponse:
+    state = request.app.state.state
+    presented = security.bearer(request.headers)
+    # only a real API key can mint a token: a token cannot extend itself
+    key_cfg = security.resolve_key(
+        state.config.get(), presented, security.plaintext_allowed(state.settings)
+    )
+    if key_cfg is None:
+        return JSONResponse(
+            {"error": {"message": "An API key is required.", "code": "invalid_api_key"}}, 401
+        )
+    if state.settings.jwt_secret is None:
+        return JSONResponse(
+            {"error": {"message": "JWT exchange is off on this gateway.", "code": "not_enabled"}},
+            501,
+        )
+    access, ttl = security.issue_token(state.settings, key_cfg, body.ttl_seconds if body else None)
+    return JSONResponse(
+        {
+            "access_token": access,
+            "token_type": "bearer",
+            "expires_in": ttl,
+            "tenant": key_cfg.tenant,
+            "role": key_cfg.role,
+        },
+        headers={"cache-control": "no-store"},
+    )

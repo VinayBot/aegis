@@ -238,6 +238,7 @@ async def gateway(
         admin_key=overrides.pop("admin_key", None),
         # the test keys are plaintext; production's refusal of them has its own test
         allow_plaintext_keys=overrides.pop("allow_plaintext_keys", True),
+        jwt_secret=overrides.pop("jwt_secret", "test-jwt-secret-0123456789abcdef0123"),
         config_path=write_config(tmp_path, ports, **overrides),
         redis_url=REDIS_URL,
         redis_prefix=f"aegistest-{uuid.uuid4().hex[:8]}",

@@ -229,7 +229,7 @@ This is the most "AI" part of the gateway.
 
 ### Step 8: Routing (choosing a model)
 
-- **Slots:** each backend can only handle so many requests at once (MLX 1, Ollama 2). The router
+- **Slots:** each backend can only handle so many requests at once (MLX 4, Ollama 2, vLLM 8; set from a measurement, `make bench-serving`). The router
   tries backends in the YAML order (primary first), skipping any whose **circuit breaker** is open.
   It waits up to **2 s** for a free slot, then moves on to the next backend.
 - **Nothing free for 10 s:** `503` with `Retry-After`.

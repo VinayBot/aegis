@@ -327,9 +327,7 @@ class Pipeline:
         s = self.s
         # -- auth
         async with self._stage(ctx, "auth") as rec:
-            key_cfg = security.resolve_key(
-                cfg, api_key, security.plaintext_allowed(self.s.settings)
-            )
+            key_cfg = security.resolve_credential(self.s.settings, cfg, api_key)
             if key_cfg is None:
                 rec["outcome"] = "rejected"
                 raise GatewayError(

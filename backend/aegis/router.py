@@ -167,6 +167,12 @@ class Router:
         self._build = build
         self.runtimes: dict[str, BackendRuntime] = {}
 
+    @staticmethod
+    def _tune_breaker(breaker: Breaker, config: GatewayConfig) -> None:
+        breaker.failure_rate = config.breaker.failure_rate
+        breaker.window_seconds = config.breaker.window_seconds
+        breaker.min_requests = config.breaker.min_requests
+
     def sync(self, config: GatewayConfig) -> None:
         """Create runtimes for backends in the config; hot-reload slot counts when idle."""
         for name, cfg in config.backends.items():
@@ -178,12 +184,14 @@ class Router:
                     config.breaker.open_seconds,
                     on_change=self._on_breaker,
                 )
+                self._tune_breaker(breaker, config)
                 self.runtimes[name] = BackendRuntime(
                     cfg, self._wrap(self._build(cfg)), breaker, cfg.slots
                 )
                 continue
             rt.breaker.error_threshold = config.breaker.error_threshold
             rt.breaker.open_seconds = config.breaker.open_seconds
+            self._tune_breaker(rt.breaker, config)
             if rt.capacity != cfg.slots and rt.in_flight == 0:
                 rt.capacity = cfg.slots
                 rt.semaphore = asyncio.Semaphore(cfg.slots)

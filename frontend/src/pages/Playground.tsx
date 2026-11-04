@@ -35,6 +35,26 @@ interface Run {
   result: StreamResult | null;
   started: number;
   headers: Record<string, string>;
+  key: string;
+}
+
+/** Thumbs up/down on an answer: stored per tenant, metered, and a Langfuse score on its trace. */
+function Rate({ run }: { run: Run }) {
+  const [sent, setSent] = useState<"up" | "down" | null>(null);
+  const requestId = run.headers["x-aegis-request-id"];
+  if (!run.result || run.result.status !== 200 || !requestId) return null;
+  const rate = async (rating: "up" | "down") => {
+    await api("/v1/feedback", { method: "POST", json: { request_id: requestId, rating }, headers: { authorization: `Bearer ${run.key}` } }).catch(() => undefined);
+    setSent(rating);
+  };
+  return (
+    <div className="mt-2 flex items-center gap-2 text-sm text-ink-soft">
+      <span>Was this answer good?</span>
+      <button type="button" className="btn btn-quiet min-h-9 px-3" aria-pressed={sent === "up"} aria-label="Good answer" onClick={() => void rate("up")}>👍</button>
+      <button type="button" className="btn btn-quiet min-h-9 px-3" aria-pressed={sent === "down"} aria-label="Bad answer" onClick={() => void rate("down")}>👎</button>
+      {sent && <span className="text-xs text-ink-mute">Recorded on this request's trace.</span>}
+    </div>
+  );
 }
 
 function TraceChip({ run }: { run: Run }) {
@@ -121,7 +141,7 @@ export default function Playground() {
   }, [mode]);
 
   const one = async (p: string, id: number) => {
-    setRuns((r) => [{ id, prompt: p, text: "", result: null, started: Date.now(), headers: {} }, ...r].slice(0, 6));
+    setRuns((r) => [{ id, prompt: p, text: "", result: null, started: Date.now(), headers: {}, key }, ...r].slice(0, 6));
     stopper.current = new AbortController();
     const chat = transport === "ws" ? wsChat : streamChat;
     const res = await chat({ model, temperature, max_tokens: 160, messages: [{ role: "user", content: p }] }, {
@@ -235,6 +255,7 @@ export default function Playground() {
                 <p className="text-sm text-ink-mute">"{run.prompt}"</p>
                 <p className="mt-2 whitespace-pre-wrap leading-relaxed text-ink">{run.text || (run.result ? "" : "…")}</p>
                 <div className="mt-3"><TraceChip run={run} /></div>
+                <Rate run={run} />
               </div>
               <MiniTrace run={run} />
             </article>

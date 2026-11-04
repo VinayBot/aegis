@@ -12,13 +12,14 @@ three changes listed under "Known gaps".
 
 | Item | Status | Evidence |
 | --- | --- | --- |
+| Tenant context and RBAC (API keys or JWT) | met | API keys (hashed in production) or short-lived HS256 JWTs exchanged at `POST /v1/auth/token`, carrying tenant and role; a token never outranks its key and dies with it. Tests: `tests/test_jwt.py`. |
 | Multi-tenant isolation; zero IDOR | met | Every tenant-visible read filters by tenant in SQL (`ledger.RECENT_TENANT_SQL`, `GET_TENANT_SQL`); another tenant's request id is a 404. Tests: `test_a_tenant_never_sees_another_tenants_requests`, `test_access_rules`. Caches are partitioned by tenant (the tenant is in every cache key). |
 | Security and guardrails: Presidio PII, Llama Guard safety | met | Presidio + regex redaction before any cache, embedder or model; Llama Guard 3 on input (cache misses) and output (before caching); streaming output redaction. Evals: PII recall 0.938 / 0 false positives, Llama Guard recall 1.0 / 0 false positives, output redaction 1.0 / 0. |
 | Automated evals gate in CI | met | `backend/evals/`: five golden sets with thresholds, run in the test suite (`test_every_offline_eval_gate_passes`) and as a CI artifact. Results below. |
-| Resilience: explicit timeouts, backoff with jitter, multi-provider fallback | met | httpx timeouts on every call (connect 2 s, read 60 s; probes 0.4 s; Llama Guard 2.5 s); first-token timeout 15 s + 1 s/1k tokens; chain retry with full-jitter backoff; fallback chains across MLX, Ollama, vLLM and the LiteLLM proxy; hedging; circuit breakers that heal without traffic. |
+| Resilience: explicit timeouts, backoff with jitter, multi-provider fallback | met | httpx timeouts on every call (connect 2 s, read 60 s; probes 0.4 s; Llama Guard 2.5 s); first-token timeout 15 s + 1 s/1k tokens; chain retry with full-jitter backoff; fallback chains across MLX, Ollama, vLLM and the LiteLLM proxy; hedging; circuit breakers on consecutive errors and on a 50% failure rate over 30 s, healing without traffic. |
 | Performance: semantic cache, SSE streaming, query plans | met | Exact and semantic caches in Redis Stack (HNSW); SSE and WebSocket streaming from async generators; `EXPLAIN QUERY PLAN` checked in tests (`test_tenant_queries_use_an_index`). Load test below. |
 | Hardened deployment: multi-stage non-root image, probes, JSON logs | met | `Dockerfile`: three stages, pinned bases, uid 10001, HEALTHCHECK; compose adds a read-only root, no capabilities, no-new-privileges. `/healthz` (liveness) and `/readyz` (readiness: 503 when no backend can serve). JSON logs with request id, trace id and tenant. CI builds the image and checks all of this. |
-| Telemetry: Langfuse tracing + Prometheus /metrics | met | OTLP to Jaeger always and to Langfuse with keys; verified on self-hosted Langfuse 4.67.0 (docs/evidence/langfuse-*.png). `GET /metrics` in Prometheus format. |
+| Telemetry: Langfuse tracing + Prometheus /metrics | met | OTLP to Jaeger always and to Langfuse with keys; verified on self-hosted Langfuse 4.67.0 (docs/evidence/langfuse-*.png). User ratings (`POST /v1/feedback`) become Langfuse scores on the trace and `aegis_feedback_total`. `GET /metrics` in Prometheus format. |
 
 ## Evaluation gate
 
@@ -31,6 +32,7 @@ three changes listed under "Known gaps".
 | Prompt injection | 31 (7 held out) | recall >= 0.85, FP rate <= 0.1 | recall 0.944, FP 0.0 |
 | Output redaction | 16 | recall 1.0, FP 0.0 | 1.0, 0.0 |
 | Llama Guard 3 1B at P(unsafe) >= 0.9 | 18 | recall >= 0.85, FP rate <= 0.1 | 1.0, 0.0 |
+| AEGIS assistant, a RAG system over these docs (live) | 13 | retrieval >= 0.9, answer accuracy >= 0.9, abstention 1.0 | 1.0, 1.0, 1.0 |
 
 The cache threshold sits in a measured gap: the least similar true paraphrase scores 0.967, the
 most similar different question ("orders from last week" vs "last month") 0.940. The two misses
@@ -41,7 +43,7 @@ phrasing ("forget everything you were told before").
 
 | Suite | Result |
 | --- | --- |
-| Backend: unit, HTTP integration against fake model servers and real Redis, SIGSTOP, eval gate | 148 passed, 90% line coverage (CI floor 85%) |
+| Backend: unit, HTTP integration against fake model servers and real Redis, SIGSTOP, eval gate | 160 passed, 91% line coverage (CI floor 85%) |
 | Frontend unit (vitest) | 7 passed |
 | End to end on the real system (Playwright) | 21 passed |
 | Page sweep: 10 routes x 4 widths (console errors, failed requests, overflow, a11y basics) | 40 of 40 clean |
@@ -53,12 +55,27 @@ phrasing ("forget everything you were told before").
 
 | Phase | Requests | Throughput | p50 | p95 | Errors |
 | --- | --- | --- | --- | --- | --- |
-| Gateway overhead (every request an exact cache hit) | 60 | 126 req/s | 49 ms | 295 ms | 0 |
-| Mixed workload (repeats and paraphrases) | 120 | 8.5 req/s | 29 ms | 6.8 s | 0 |
+| Gateway overhead (every request an exact cache hit) | 60 | 233 req/s | 48 ms | 77 ms | 0 |
+| Mixed workload (repeats and paraphrases) | 120 | 18.4 req/s | 23 ms | 2.5 s | 0 |
 
-In the mixed run 102 of 120 requests were answered without a model call (64 exact hits, 13
-semantic hits, 25 coalesced). The p95 is the local 3B models on a laptop under load; the
-gateway's own share is the overhead row.
+In the mixed run 102 of 120 requests were answered without a model call (56 exact hits, 21
+semantic hits, 25 coalesced). The p95 is the local 3B model on a laptop under load; the
+gateway's own share is the overhead row. Before the MLX primary was given 4 slots (see below)
+the same run gave 8.5 req/s with a 6.8 s p95.
+
+## Serving benchmark
+
+`make bench-serving` (docs/evidence/serving_bench.json): the same 96-token generation sent
+straight to each server at 1, 2, 4 and 8 at once.
+
+| Server | 1 | 2 | 4 | 8 | Latency 1 to 8 |
+| --- | --- | --- | --- | --- | --- |
+| vLLM (Metal), Qwen2.5-0.5B | 249 tok/s | 458 | 844 | 1,036 (x4.2) | 0.39 to 0.74 s |
+| mlx_lm.server, Qwen2.5-3B | 61 tok/s | 119 | 212 | 232 (x3.8) | 1.58 to 3.04 s |
+
+vLLM's continuous batching keeps scaling to 8 with almost flat latency. mlx-lm 0.32 also
+batches, but on this GPU its throughput stops growing past 4 while latency doubles, so its
+backend has 4 slots (it had 1, from an older mlx-lm that served one request at a time).
 
 ## Service levels (targets for this deployment)
 

@@ -92,6 +92,12 @@ class PromMetrics:
             ["backend", "to"],
             registry=r,
         )
+        self.feedback = Counter(
+            "aegis_feedback",
+            "User ratings of answers (thumbs up/down).",
+            ["model", "backend", "rating"],
+            registry=r,
+        )
         self.redactions = Counter(
             "aegis_pii_redactions", "PII values redacted, by entity type.", ["entity"], registry=r
         )
@@ -147,6 +153,10 @@ class PromMetrics:
             self.failovers.inc()
         elif kind == "router.retry":
             self.retries.inc()
+        elif kind == "feedback":
+            self.feedback.labels(
+                str(e.get("model") or "?"), str(e.get("backend") or "none"), str(e.get("rating"))
+            ).inc()
         elif kind == "breaker.state":
             self.breaker_transitions.labels(str(e.get("backend")), str(e.get("state"))).inc()
 

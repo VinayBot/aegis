@@ -110,6 +110,8 @@ loopback interface is the local operator (admin). See docs/ARCHITECTURE.md, Secu
 | `GET /api/docs` | Project documents |
 | `GET /api/docs/{slug}` | One project document (markdown) |
 | `POST /api/assistant/chat` | Ask AEGIS about the project (SSE); routed through the gateway |
+| `POST /v1/auth/token` | Exchange an API key for a short-lived JWT (HS256; `ttl_seconds` 60-86400, default 900); 501 when `AEGIS_JWT_SECRET` is unset |
+| `POST /v1/feedback` | Rate an answer: `{"request_id", "rating": "up"|"down", "comment"?}`; tenant-scoped; stored, metered, and a Langfuse `user-feedback` score on the trace |
 | `GET /healthz` | Liveness: the process and its event loop respond |
 | `GET /readyz` | Readiness: config loaded and at least one backend can serve (503 otherwise) |
 | `GET /metrics` | Prometheus text format: requests, latency and TTFT histograms, tokens, est. cost and savings, rejections, failovers, hedges, retries, breaker states, slots, PII redactions |

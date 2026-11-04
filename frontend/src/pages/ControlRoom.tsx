@@ -112,6 +112,7 @@ function Tenants() {
             <th className="pb-2 pl-6 font-medium">budget used (est. cloud equivalent)</th>
             <th className="pb-2 text-right font-medium">429s</th>
             <th className="pb-2 text-right font-medium">saved</th>
+            <th className="pb-2 text-right font-medium">rating</th>
           </tr>
         </thead>
         <tbody>
@@ -135,6 +136,9 @@ function Tenants() {
                 </td>
                 <td className="py-2 text-right font-tabular" style={{ color: r.rate_limited ? "var(--red)" : undefined }}>{fmtInt(r.rate_limited)}</td>
                 <td className="py-2 text-right font-tabular">{fmtUsd(r.saved_est_usd)}</td>
+                <td className="py-2 text-right font-tabular" title={`${r.feedback_up ?? 0} up · ${r.feedback_down ?? 0} down`}>
+                  {(r.feedback_up ?? 0) + (r.feedback_down ?? 0) ? `${Math.round((100 * (r.feedback_up ?? 0)) / ((r.feedback_up ?? 0) + (r.feedback_down ?? 0)))}% 👍` : "–"}
+                </td>
               </tr>
             );
           })}

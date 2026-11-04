@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     # file, and the repo's demo keys are public): only `sha256:` entries authenticate. Set this
     # to accept plaintext keys anyway, e.g. for a local container demo.
     allow_plaintext_keys: bool = False
+    # Short-lived JWTs (HS256) exchanged for an API key at POST /v1/auth/token. Unset: the
+    # exchange is off and only API keys authenticate. scripts/dev.sh sets a fresh random secret.
+    jwt_secret: SecretStr | None = None
+    jwt_ttl_seconds: int = 900
     log_format: Literal["json", "text"] = "json"
     log_level: str = "INFO"
     config_path: Path = BACKEND_DIR / "config" / "gateway.yaml"

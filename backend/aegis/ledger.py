@@ -34,6 +34,11 @@ CREATE TABLE IF NOT EXISTS system_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, kind TEXT, backend TEXT, detail TEXT
 );
 CREATE INDEX IF NOT EXISTS system_events_kind ON system_events(kind);
+CREATE TABLE IF NOT EXISTS feedback (
+  request_id TEXT PRIMARY KEY, ts REAL NOT NULL, tenant TEXT, trace_id TEXT,
+  value INTEGER NOT NULL, comment TEXT
+);
+CREATE INDEX IF NOT EXISTS feedback_tenant ON feedback(tenant, ts);
 """
 
 COLUMNS = (
@@ -77,6 +82,7 @@ class Ledger:
         self._migrate()
         self._conn.executescript(SCHEMA)
         self.rows_written = 0
+        self._in_hand = 0  # rows the background writer has taken but not yet written
         self.batches = 0
         self.dropped = 0
         self.last_batch_ms = 0.0
@@ -135,16 +141,23 @@ class Ledger:
         return self._queue.qsize()
 
     async def flush(self) -> None:
+        """Write everything queued *and* wait for the batch the writer already holds, so a read
+        right after a flush sees every row recorded before it."""
         batch: list[tuple[str, tuple[Any, ...]]] = []
         while not self._queue.empty():
             batch.append(self._queue.get_nowait())
         if batch:
             await asyncio.to_thread(self._write, batch)
+        for _ in range(400):  # at most ~2 s: one flush interval plus a write
+            if not self._in_hand:
+                return
+            await asyncio.sleep(0.005)
 
     async def _drain(self) -> None:
         while True:
             first = await self._queue.get()
             batch = [first]
+            self._in_hand = 1
             deadline = time.monotonic() + self.flush_interval
             while len(batch) < self.batch_size:
                 timeout = deadline - time.monotonic()
@@ -158,6 +171,8 @@ class Ledger:
                 await asyncio.to_thread(self._write, batch)
             except Exception:  # never let a bad row kill the writer
                 self.dropped += len(batch)
+            finally:
+                self._in_hand = 0
 
     def _write(self, batch: list[tuple[str, tuple[Any, ...]]]) -> None:
         start = time.perf_counter()
@@ -216,7 +231,7 @@ class Ledger:
 
     async def tenants(self) -> list[dict[str, Any]]:
         month_start = time.mktime(time.strptime(time.strftime("%Y-%m-01"), "%Y-%m-%d"))
-        return await self.query(
+        rows = await self.query(
             """SELECT tenant, COUNT(*) AS requests,
                       COALESCE(SUM(tokens_in + tokens_out), 0) AS tokens,
                       SUM(http_status = 429) AS rate_limited,
@@ -225,6 +240,37 @@ class Ledger:
                FROM requests WHERE ts >= ? GROUP BY tenant ORDER BY tokens DESC""",
             (month_start,),
         )
+        votes = {
+            r["tenant"]: r
+            for r in await self.query(
+                """SELECT tenant, SUM(value = 1) AS feedback_up, SUM(value = 0) AS feedback_down
+                   FROM feedback WHERE ts >= ? GROUP BY tenant""",
+                (month_start,),
+            )
+        }
+        for r in rows:
+            v = votes.get(r["tenant"], {})
+            r["feedback_up"], r["feedback_down"] = (
+                v.get("feedback_up") or 0,
+                v.get("feedback_down") or 0,
+            )
+        return rows
+
+    def _record_feedback(
+        self, request_id: str, tenant: str, trace_id: str | None, value: int, comment: str | None
+    ) -> None:
+        with self._db_lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO feedback (request_id, ts, tenant, trace_id, value, comment)"
+                " VALUES (?,?,?,?,?,?)",
+                (request_id, time.time(), tenant, trace_id, value, comment),
+            )
+
+    async def record_feedback(
+        self, request_id: str, tenant: str, trace_id: str | None, value: int, comment: str | None
+    ) -> None:
+        """A user's rating of one answer: written at once (rare, and the user is waiting)."""
+        await asyncio.to_thread(self._record_feedback, request_id, tenant, trace_id, value, comment)
 
     RECENT_SQL = "SELECT * FROM requests ORDER BY ts DESC LIMIT ?"
     RECENT_TENANT_SQL = "SELECT * FROM requests WHERE tenant = ? ORDER BY ts DESC LIMIT ?"

@@ -5,7 +5,7 @@
 | Component | Runs as | Role |
 | --- | --- | --- |
 | Gateway | `uvicorn aegis.main:app` (FastAPI, async) on :8000 | the request path, control plane, WebSocket events, assistant |
-| MLX primary | `mlx_lm.server` on :8081, Qwen2.5-3B-Instruct 4-bit | first choice for `aegis-chat`; 1 slot |
+| MLX primary | `mlx_lm.server` on :8081, Qwen2.5-3B-Instruct 4-bit | first choice for `aegis-chat`; 4 slots (it batches; throughput stops growing past 4 here) |
 | Ollama fallback | `ollama serve` on :11434, llama3.2:3b | second choice; 2 slots |
 | LiteLLM adapter | the LiteLLM Python SDK as one backend | provider translation inside the gateway process |
 | LiteLLM proxy | the real `litellm --config` server on :4000 (`infra/litellm/config.yaml`) | an OpenAI-compatible proxy in front of Ollama; its retries off so AEGIS owns failover |
@@ -66,6 +66,7 @@ Every log line is JSON with the request id, trace id and tenant of the request t
 | Connect error, 5xx, 429, unknown model | failover to the next backend before the first token; breaker counts an error | `router.route` |
 | No first token in 15 s + 1 s/1k prompt tokens | timeout: breaker opens at once; failover | `router.route` |
 | Three consecutive errors | breaker opens for 30 s | `breaker.py` |
+| Half of the last 30 s of requests failed (at least 10) | breaker opens for 30 s: catches a backend failing every other request, which never makes three in a row | `breaker.py` |
 | Breaker cool-down over | half-open: exactly one live request probes; success closes, failure re-opens | `breaker.py` |
 | Breaker half-open and no traffic | the health monitor sends that one live request itself (one token), so an idle gateway heals | `health.py` |
 | Host paused (laptop sleep: wall clock jumps past the check interval) | probe failures are not counted for 10 s; they are the host's, not the backends' | `health.py` |
@@ -101,6 +102,11 @@ Every log line is JSON with the request id, trace id and tenant of the request t
   loopback caller is the local operator, so the demo site needs no key, unless the browser says
   the request came from another website (Origin check: no CSRF or WebSocket hijack from a page
   open in the same browser). Loopback is never trusted in production.
+- **Tokens.** A client may trade its API key for a short-lived HS256 JWT
+  (`POST /v1/auth/token`, 15 min by default) carrying the key's id, tenant and role, for browsers
+  and mobile apps that should not hold a long-lived key. Only `HS256` is accepted (never `none`),
+  issuer and expiry are required, a token cannot mint another, and deleting the key from the YAML
+  revokes its tokens at once.
 - **Keys.** YAML entries may be `sha256:<hex>`; lookup hashes the presented key and compares
   against every entry with `hmac.compare_digest`. Only a key's public `id` leaves `security.py`:
   ledger rows, Redis key names, events, logs and every API response use it. `/api/config` masks

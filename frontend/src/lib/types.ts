@@ -40,7 +40,7 @@ export interface ArchNode {
   source: string;
   stats: Record<string, number | null>;
   config?: Record<string, unknown>;
-  breaker?: { state: BreakerState; retry_after_s: number; open_seconds: number; trips: number };
+  breaker?: { state: BreakerState; retry_after_s: number; open_seconds: number; trips: number; window_failure_rate?: number | null; failure_rate_threshold?: number };
   slots?: { capacity: number; in_flight: number } | null;
 }
 
@@ -138,6 +138,8 @@ export interface Summary extends Omit<RequestRow, "ts"> {
 export interface Tenant {
   tenant: string;
   key_id: string;
+  feedback_up?: number;
+  feedback_down?: number;
   tpm: number;
   budget: { soft: number; hard: number };
   spent_est_usd: number;

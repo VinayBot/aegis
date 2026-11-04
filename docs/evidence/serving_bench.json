@@ -1,0 +1,74 @@
+{
+  "prompt": "Count from 1 to 200, separated by commas. Do not stop early.",
+  "max_tokens": 96,
+  "servers": {
+    "vllm-metal (Qwen2.5-0.5B)": [
+      {
+        "concurrency": 1,
+        "output_tokens": 96,
+        "wall_s": 0.39,
+        "aggregate_tokens_per_s": 248.8,
+        "mean_latency_s": 0.39,
+        "speedup_vs_1": 1.0
+      },
+      {
+        "concurrency": 2,
+        "output_tokens": 192,
+        "wall_s": 0.42,
+        "aggregate_tokens_per_s": 457.9,
+        "mean_latency_s": 0.42,
+        "speedup_vs_1": 1.84
+      },
+      {
+        "concurrency": 4,
+        "output_tokens": 384,
+        "wall_s": 0.45,
+        "aggregate_tokens_per_s": 844.0,
+        "mean_latency_s": 0.45,
+        "speedup_vs_1": 3.39
+      },
+      {
+        "concurrency": 8,
+        "output_tokens": 768,
+        "wall_s": 0.74,
+        "aggregate_tokens_per_s": 1035.6,
+        "mean_latency_s": 0.74,
+        "speedup_vs_1": 4.16
+      }
+    ],
+    "mlx_lm.server (Qwen2.5-3B)": [
+      {
+        "concurrency": 1,
+        "output_tokens": 96,
+        "wall_s": 1.58,
+        "aggregate_tokens_per_s": 60.7,
+        "mean_latency_s": 1.58,
+        "speedup_vs_1": 1.0
+      },
+      {
+        "concurrency": 2,
+        "output_tokens": 192,
+        "wall_s": 1.62,
+        "aggregate_tokens_per_s": 118.8,
+        "mean_latency_s": 1.62,
+        "speedup_vs_1": 1.96
+      },
+      {
+        "concurrency": 4,
+        "output_tokens": 384,
+        "wall_s": 1.81,
+        "aggregate_tokens_per_s": 212.2,
+        "mean_latency_s": 1.81,
+        "speedup_vs_1": 3.5
+      },
+      {
+        "concurrency": 8,
+        "output_tokens": 768,
+        "wall_s": 3.31,
+        "aggregate_tokens_per_s": 231.7,
+        "mean_latency_s": 3.04,
+        "speedup_vs_1": 3.82
+      }
+    ]
+  }
+}

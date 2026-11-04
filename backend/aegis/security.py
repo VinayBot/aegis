@@ -27,9 +27,12 @@ import hashlib
 import hmac
 import ipaddress
 import sys
+import time
+import uuid
 from dataclasses import dataclass
 from typing import Literal
 
+import jwt
 from fastapi import HTTPException, Request, WebSocket
 
 from aegis.config import GatewayConfig, KeyConfig
@@ -64,6 +67,64 @@ def resolve_key(
         if hmac.compare_digest(stored, want) and match is None:
             match = key_cfg
     return match
+
+
+JWT_ISSUER = "aegis"
+JWT_MAX_TTL = 86_400
+
+
+def issue_token(
+    settings: Settings, key: KeyConfig, ttl_seconds: int | None = None
+) -> tuple[str, int]:
+    """A short-lived HS256 token standing in for an API key: for browsers and mobile apps, which
+    should not hold a long-lived key. It names the key (by id), the tenant and the role; it can
+    never grant more than the key it was exchanged for."""
+    if settings.jwt_secret is None:
+        raise ValueError("JWT exchange is off (AEGIS_JWT_SECRET is not set)")
+    ttl = max(60, min(ttl_seconds or settings.jwt_ttl_seconds, JWT_MAX_TTL))
+    now = int(time.time())
+    claims = {
+        "iss": JWT_ISSUER,
+        "sub": key.id,
+        "tenant": key.tenant,
+        "role": key.role,
+        "iat": now,
+        "exp": now + ttl,
+        "jti": uuid.uuid4().hex,
+    }
+    return jwt.encode(claims, settings.jwt_secret.get_secret_value(), algorithm="HS256"), ttl
+
+
+def verify_token(settings: Settings, cfg: GatewayConfig, token: str) -> KeyConfig | None:
+    """The key a valid token stands for, or None. The key must still exist: removing it from the
+    YAML revokes every token issued for it. The role is never above the key's own."""
+    if settings.jwt_secret is None or token.count(".") != 2:
+        return None
+    try:
+        claims = jwt.decode(
+            token,
+            settings.jwt_secret.get_secret_value(),
+            algorithms=["HS256"],  # never "none", never an algorithm the token chooses
+            issuer=JWT_ISSUER,
+            options={"require": ["exp", "iat", "sub", "iss"]},
+        )
+    except jwt.PyJWTError:
+        return None
+    key = next((k for k in cfg.keys.values() if k.id == claims.get("sub")), None)
+    if key is None or key.tenant != claims.get("tenant"):
+        return None
+    return key
+
+
+def resolve_credential(
+    settings: Settings, cfg: GatewayConfig, presented: str | None
+) -> KeyConfig | None:
+    """An API key, or a JWT exchanged for one."""
+    if not presented:
+        return None
+    return resolve_key(cfg, presented, plaintext_allowed(settings)) or verify_token(
+        settings, cfg, presented
+    )
 
 
 def plaintext_keys(cfg: GatewayConfig) -> list[str]:
@@ -115,7 +176,7 @@ def principal_for(
     admin = settings.admin_key.get_secret_value() if settings.admin_key else None
     if presented and admin and hmac.compare_digest(digest(presented), digest(admin)):
         return Principal("admin", None, ADMIN_ENV_KEY_ID)
-    key_cfg = resolve_key(cfg, presented, plaintext_allowed(settings))
+    key_cfg = resolve_credential(settings, cfg, presented)
     if key_cfg is not None:
         if key_cfg.role == "admin":
             return Principal("admin", key_cfg.tenant, key_cfg.id)

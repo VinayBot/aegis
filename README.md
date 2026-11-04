@@ -23,16 +23,16 @@ and events.
 | 21 | Rate limiting | Lua token bucket per key, refunds, 429 + Retry-After ([ratelimit.py](backend/aegis/ratelimit.py)) | `test_rate_limit_*`; "Rate-limit flood" |
 | 21 | Cost tracking | Per-request est. cloud cost and savings, tenant budgets ([ledger.py](backend/aegis/ledger.py), [budget.py](backend/aegis/budget.py)), Langfuse cost per generation | `test_hard_budget_blocks`; Control Room |
 | 21 | Streaming | SSE relay from an async generator, OpenAI chunk format | `test_streams_openai_sse_*`; `scripts/demo_stream.sh` |
-| 22 | vLLM local deployment | Real `vllm serve` (V1 engine, paged attention, continuous batching) via vllm-metal, model `aegis-vllm` | `make setup-serving`; e2e "every backend is on the map" |
-| 22 | Langfuse tracing | OTLP + Basic auth to Langfuse beside Jaeger, with Langfuse trace/user/generation attributes ([telemetry.py](backend/aegis/telemetry.py)); self-hosted stack in [infra/langfuse](infra/langfuse/docker-compose.yml) | Verified on Langfuse 4.67.0: [traces](docs/evidence/langfuse-traces.png), [one trace](docs/evidence/langfuse-trace.png) |
+| 22 | vLLM local deployment | Real `vllm serve` (V1 engine, paged attention, continuous batching) via vllm-metal, model `aegis-vllm` | [Batching benchmark](docs/evidence/serving_bench.json): 249 → 1,036 tok/s from 1 to 8 concurrent requests (`make bench-serving`) |
+| 22 | Langfuse tracing | OTLP + Basic auth to Langfuse beside Jaeger, with Langfuse trace/user/generation attributes ([telemetry.py](backend/aegis/telemetry.py)); user feedback ratings as Langfuse scores (`POST /v1/feedback`, [feedback.py](backend/aegis/feedback.py)); self-hosted stack in [infra/langfuse](infra/langfuse/docker-compose.yml) | Verified on Langfuse 4.67.0: [traces](docs/evidence/langfuse-traces.png), [one trace](docs/evidence/langfuse-trace.png); `test_feedback_becomes_a_langfuse_score` |
 | 22 | OpenTelemetry | One trace per request, one span per stage, GenAI semantic conventions; Prometheus `/metrics` ([prom.py](backend/aegis/prom.py)) | Traces tab; `test_prometheus_metrics` |
 | 23 | Semantic cache (Redis) | Redis Stack HNSW, bge-small, threshold 0.95, partitioned by tenant and context ([cache.py](backend/aegis/cache.py)) | Eval: precision 1.0, recall 1.0 on 30 labelled pairs |
 | 23 | LiteLLM proxy | The real `litellm --config` server ([infra/litellm](infra/litellm/config.yaml)) as backend `litellm-proxy`, plus the SDK adapter | `aegis-litellm-proxy` model; e2e LiteLLM test |
-| 23 | Circuit breakers | Closed/open/half-open, one live probe, self-healing when idle ([breaker.py](backend/aegis/breaker.py), [health.py](backend/aegis/health.py)) | `test_three_errors_open_the_breaker…`; SIGSTOP test |
+| 23 | Circuit breakers | Closed/open/half-open; trips on a timeout, 3 consecutive errors, or a 50% failure rate over 30 s; one live probe; self-healing when idle ([breaker.py](backend/aegis/breaker.py), [health.py](backend/aegis/health.py)) | `test_breaker_opens_on_a_failure_rate_over_the_window`; SIGSTOP test |
 | 24 | Server-Sent Events | `POST /v1/chat/completions` with `stream: true` | every Playground request |
 | 24 | Async generators | The pipeline is a chain of async generators; cancellation flows upstream | `test_websocket_cancel_stops_the_model` |
 | 24 | WebSockets | `/v1/ws/chat` (full duplex, mid-stream cancel) and `/ws/events` (live events) | Playground "Transport: WebSocket" and Stop |
-| 25 | Architecture | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), the live map | Architecture tab |
+| 25 | Architecture | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), the live map; API keys or short-lived JWTs with tenant and role ([security.py](backend/aegis/security.py)) | Architecture tab; `tests/test_jwt.py` |
 | 25 | Peer auditing | [docs/PEER_AUDIT.md](docs/PEER_AUDIT.md): a 30-minute audit guide and 24 findings already fixed, 10 of them from an independent review | |
 | 25 | Production readiness | [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md): the capstone checklist with evidence, SLOs, runbook, known gaps | CI, `make image` |
 | 25 | Final demonstration | [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) | |
@@ -68,6 +68,7 @@ Other targets:
 | `make evals` / `make evals-live` | the evaluation gate (offline / with Llama Guard) |
 | `make e2e` | 21 browser tests against `make dev` |
 | `make loadtest` | throughput and latency percentiles against `make dev` |
+| `make bench-serving` | vLLM vs MLX throughput at 1-8 concurrent requests (continuous batching) |
 | `make image` | the production image and its smoke test |
 | `make lint`, `make typecheck`, `make sweep`, `make perf` | quality checks |
 

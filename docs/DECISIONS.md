@@ -245,3 +245,42 @@ requests share one connection. Same pipeline, same guardrails, same traces.
 The docs index embedded every chunk in one fastembed call (default batch 256): a 1.49 GB peak at
 startup, which a 2 GB container did not survive. Batches of 16 peak at 444 MB and take 6.5 s for
 300 chunks, at startup only.
+
+## The breaker trips on a failure rate too
+
+Three consecutive errors catch a dead backend fast, but a backend failing every other request
+never makes three in a row. So the breaker also trips when at least half of the last 30 seconds
+of requests failed, once there are at least 10 (the rule the course describes). The window is
+cleared when the breaker opens, so recovery starts from a clean slate.
+
+## User feedback as Langfuse scores
+
+A rating is worth most next to the trace it judges: `POST /v1/feedback` stores it (tenant-scoped,
+one vote per request, changeable), counts it in Prometheus, and sends it to Langfuse's scores API
+as `user-feedback` on that request's trace, so quality can be cut by model, backend and cache
+outcome beside latency and cost. Langfuse being away never fails the vote.
+
+## Short-lived JWTs beside API keys
+
+Browsers and mobile apps should not hold a long-lived key. `POST /v1/auth/token` trades a key for
+an HS256 token (15 min by default) naming the key's id, tenant and role. Rejected: RS256 and a
+JWKS endpoint (one gateway signs and verifies its own tokens, so a shared secret is enough) and
+refresh tokens (re-exchanging the key is simpler). The token is checked against the live YAML, so
+removing a key revokes its tokens without a deny list.
+
+## Hybrid retrieval for the assistant
+
+The assistant's evaluation found dense search ranking a document that merely mentions coalescing
+above the README section that defines the coalescer. BM25 ranks that section first, so the two
+rankings are fused with reciprocal rank fusion (k=60, as in Veritas). A keyword-only match must
+also be semantically close (cosine >= 0.5): measured, "What is the capital of France?" scores 8.4
+in BM25 against a report that quotes that question. The plain-words settings are indexed one fact
+per chunk, so a specific question finds its line. Retrieval, answer accuracy and abstention are
+all 1.0 on the 13-question set.
+
+## MLX gets 4 slots, from a measurement
+
+The MLX backend had 1 slot because older mlx-lm served one request at a time. mlx-lm 0.32 batches
+(`--decode-concurrency`, default 32), and `make bench-serving` shows its throughput growing x3.5
+up to 4 concurrent requests and flattening after, so 4 slots it is. The load test went from 8.5 to
+18.4 req/s and its p95 from 6.8 s to 2.5 s.
