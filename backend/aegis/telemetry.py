@@ -123,6 +123,8 @@ def start_root(model: str, attributes: dict[str, Any]) -> Span:
         attributes={
             "gen_ai.request.model": model,
             "langfuse.trace.name": f"chat {model}",
+            # the request, not a model call: usage is counted once, on the generation below
+            "langfuse.observation.type": "span",
             **_clean(attributes),
         },
         context=otel_context.Context(),

@@ -109,7 +109,7 @@ safety:
   enabled: true
   base_url: http://127.0.0.1:11434/v1
   model: llama-guard3:1b
-  timeout_ms: 1500
+  timeout_ms: 2500        # a cold model load is ~2 s; warm checks take ~60-150 ms
   on_error: allow
   check_output: true
   unsafe_threshold: 0.9   # P(unsafe) to block; measured: false positives 0.50-0.69, hazards >= 0.986

@@ -51,6 +51,7 @@ ollama list | grep -q "^${OLLAMA_MODEL}" || { say "pulling $OLLAMA_MODEL"; ollam
 ollama list | grep -q "^llama-guard3:1b" || { say "pulling llama-guard3:1b (content safety)"; ollama pull llama-guard3:1b; }
 # keep the fallback warm so the first failover is not a cold load
 curl -s http://127.0.0.1:11434/api/generate -d "{\"model\":\"$OLLAMA_MODEL\",\"keep_alive\":\"30m\"}" >/dev/null || true
+curl -s http://127.0.0.1:11434/api/generate -d '{"model":"llama-guard3:1b","keep_alive":"30m"}' >/dev/null || true
 
 # 3b. the real LiteLLM proxy server (make setup-serving), one backend in a chain
 export LITELLM_MASTER_KEY="${LITELLM_MASTER_KEY:-sk-aegis-local}"   # local only; the gateway reads it from the env

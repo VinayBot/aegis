@@ -12,7 +12,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": gateway,
-      "/v1": gateway,
+      "/v1": { target: gateway, ws: true }, // /v1/ws/chat is a WebSocket
       "/ws": { target: gateway.replace("http", "ws"), ws: true },
     },
   },

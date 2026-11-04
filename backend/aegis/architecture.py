@@ -86,6 +86,15 @@ PIPELINE: list[tuple[str, str, str, str, str, str]] = [
         "Identical requests in flight at once share one upstream call.",
     ),
     (
+        "safety",
+        "Content safety",
+        "Reflexes",
+        "stage",
+        "guardrails/safety.py",
+        "Llama Guard 3 checks the prompt on a cache miss (and the answer before it is cached); "
+        "blocks only when P(unsafe) >= the threshold.",
+    ),
+    (
         "router",
         "Router",
         "Reflexes",
@@ -250,6 +259,7 @@ def build(state: AppState) -> dict[str, Any]:
         "ratelimit": {"keys": {k: {"tenant": v.tenant, "tpm": v.tpm} for k, v in cfg.keys.items()}},
         "budget": {"tenants": {v.tenant: v.budget.model_dump() for v in cfg.keys.values()}},
         "exact_cache": {"ttl_seconds": cfg.cache.ttl_seconds},
+        "safety": cfg.safety.model_dump(),
         "semantic_cache": {
             "threshold": cfg.cache.semantic_threshold,
             "max_tokens": cfg.cache.semantic_max_tokens,
@@ -285,6 +295,7 @@ def build(state: AppState) -> dict[str, Any]:
         "exact_cache",
         "semantic_cache",
         "coalescer",
+        "safety",
         "router",
         "hedger",
     ]

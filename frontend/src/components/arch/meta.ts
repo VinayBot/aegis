@@ -2,7 +2,7 @@
 // without the docs. Anything the API adds that is not listed here falls back to a generic icon.
 import {
   Activity, Binary, BrainCircuit, Cpu, Database, Gauge, GitMerge, HardDrive, KeyRound, ListChecks,
-  Monitor, Radio, Route, Server, ShieldCheck, Split, Wallet, Zap, type LucideIcon,
+  Monitor, Radio, Route, Server, ShieldAlert, ShieldCheck, Split, Wallet, Zap, type LucideIcon,
 } from "lucide-react";
 
 export const META: Record<string, { icon: LucideIcon; role: string }> = {
@@ -15,6 +15,7 @@ export const META: Record<string, { icon: LucideIcon; role: string }> = {
   semantic_cache: { icon: BrainCircuit, role: "similar question: instant replay" },
   embedder: { icon: Binary, role: "turns text into vectors" },
   coalescer: { icon: GitMerge, role: "identical requests share one call" },
+  safety: { icon: ShieldAlert, role: "Llama Guard: is it safe to answer?" },
   router: { icon: Route, role: "picks a healthy, free model" },
   hedger: { icon: Split, role: "races a slow model" },
   relay: { icon: Radio, role: "streams tokens back" },
@@ -36,7 +37,7 @@ export const JOURNEY: { group: string; title: string; explains: string; stages: 
   { group: "Ingress", title: "Check", explains: "Who is asking, and is the prompt safe?", stages: ["auth", "guardrails"] },
   { group: "Policy", title: "Allow", explains: "Within its token rate and budget?", stages: ["ratelimit", "budget"] },
   { group: "Memory", title: "Remember", explains: "Answered before, or being answered now?", stages: ["exact_cache", "semantic_cache", "coalescer"] },
-  { group: "Reflexes", title: "Choose", explains: "Which model is healthy and free right now?", stages: ["router", "hedger"] },
+  { group: "Reflexes", title: "Choose", explains: "Is it safe to answer, and which model is healthy and free right now?", stages: ["safety", "router", "hedger"] },
   { group: "Backends", title: "Think", explains: "A local model writes the answer.", stages: [] },
   { group: "Delivery", title: "Deliver", explains: "Stream it back and record it.", stages: ["relay", "ledger_queue"] },
 ];

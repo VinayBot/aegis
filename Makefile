@@ -4,7 +4,7 @@
 VLLM_WHEEL := https://github.com/vllm-project/vllm/releases/download/v0.32.0/vllm-0.32.0%2Bcpu-cp38-abi3-macosx_11_0_arm64.whl
 VLLM_METAL_WHEEL := https://github.com/vllm-project/vllm-metal/releases/download/v0.32.0/vllm_metal-0.32.0-cp312-cp312-macosx_15_0_arm64.whl
 
-.PHONY: perf sweep setup setup-serving evals loadtest infra dev test test-backend test-frontend e2e lint typecheck build serve record-fixture memory assets clean
+.PHONY: perf sweep setup setup-serving evals loadtest langfuse-up langfuse-down infra dev test test-backend test-frontend e2e lint typecheck build serve record-fixture memory assets clean
 
 setup: ## install everything (Python deps, spaCy model, Node deps, Playwright browser, models)
 	cd backend && uv sync --extra litellm  # LiteLLM is the optional adapter; installed so it can be demonstrated
@@ -74,3 +74,11 @@ perf: ## frame-time profile of the animated pages on the Mac GPU (needs `make de
 
 clean:
 	rm -rf frontend/dist var/log/*.log
+
+langfuse-up: ## self-hosted Langfuse v4 on :3100 (needs ~4 GB in Docker: colima start --memory 6)
+	docker-compose -f infra/langfuse/docker-compose.yml up -d
+	@echo "Langfuse: http://localhost:3100 (admin@aegis.local / aegis-local-only). Start the gateway with:"
+	@echo "  AEGIS_LANGFUSE_HOST=http://localhost:3100 AEGIS_LANGFUSE_PUBLIC_KEY=pk-lf-aegis-local AEGIS_LANGFUSE_SECRET_KEY=sk-lf-aegis-local"
+
+langfuse-down:
+	docker-compose -f infra/langfuse/docker-compose.yml down

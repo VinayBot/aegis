@@ -70,7 +70,16 @@ export async function streamChat(
   let summary: Record<string, unknown> | null = null;
   let error: Record<string, unknown> | null = null;
   for (;;) {
-    const { value, done } = await reader.read();
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try {
+      chunk = await reader.read();
+    } catch (e) {
+      // Stop: the fetch was aborted; the gateway sees the client leave and cancels the model call
+      if ((e as Error).name === "AbortError") error = { code: "cancelled", message: "Stopped by you" };
+      else throw e;
+      break;
+    }
+    const { value, done } = chunk;
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
     let idx;
@@ -99,4 +108,49 @@ export async function streamChat(
     }
   }
   return { status: res.status, headers, text, summary, error };
+}
+
+/** The same chat over the full-duplex WebSocket (/v1/ws/chat). Aborting the signal sends a
+ *  `cancel` frame: the gateway cancels the upstream model call and answers `cancelled`. */
+export function wsChat(
+  body: Record<string, unknown>,
+  opts: { key?: string; noCache?: boolean; onToken?: (t: string) => void; onHeaders?: (h: Record<string, string>, status: number) => void; signal?: AbortSignal },
+): Promise<StreamResult> {
+  const scheme = location.protocol === "https:" ? "wss" : "ws";
+  const url = `${scheme}://${location.host}/v1/ws/chat?key=${encodeURIComponent(opts.key ?? DEMO_KEY)}`;
+  return new Promise((resolve) => {
+    const ws = new WebSocket(url);
+    const out: StreamResult = { status: 0, headers: {}, text: "", summary: null, error: null };
+    const finish = () => { ws.close(); resolve(out); };
+    opts.signal?.addEventListener("abort", () => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "cancel", id: "pg" }));
+    });
+    ws.onopen = () => ws.send(JSON.stringify({ type: "chat", id: "pg", no_cache: opts.noCache, body: { ...body, stream: true } }));
+    ws.onerror = () => { out.error = { code: "websocket_error", message: "WebSocket failed" }; resolve(out); };
+    ws.onmessage = (ev) => {
+      const msg = JSON.parse(String(ev.data));
+      if (msg.type === "start") {
+        out.status = 200;
+        out.headers = { ...(msg.headers ?? {}), "x-transport": "websocket" };
+        opts.onHeaders?.(out.headers, 200);
+      } else if (msg.type === "chunk") {
+        for (const c of msg.data?.choices ?? []) {
+          const t = c.delta?.content;
+          if (t) { out.text += t; opts.onToken?.(t); }
+        }
+      } else if (msg.type === "summary") {
+        out.summary = msg.data;
+      } else if (msg.type === "error") {
+        out.status = msg.status ?? 500;
+        out.error = msg.error ?? msg;
+        if (!out.headers["x-aegis-request-id"]) opts.onHeaders?.(out.headers, out.status);
+        finish();
+      } else if (msg.type === "cancelled") {
+        out.error = { code: "cancelled", message: "Stopped by you: the model call was cancelled" };
+        finish();
+      } else if (msg.type === "done") {
+        finish();
+      }
+    };
+  });
 }

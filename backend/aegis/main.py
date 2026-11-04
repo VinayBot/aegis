@@ -136,6 +136,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await monitor.check_all()
         monitor.start()
         system_events = asyncio.get_running_loop().create_task(_record_system_events(state))
+        if cfg.safety.enabled:  # load Llama Guard now, so the first request is not a cold start
+            sc = cfg.safety
+            warm = state.safety.classify(
+                sc.base_url, sc.model, [{"role": "user", "content": "hi"}], 10
+            )
+            state.safety_warmup = asyncio.get_running_loop().create_task(warm)  # type: ignore[attr-defined]
         docs = DocsIndex(state)
         state.docs_index = docs  # type: ignore[attr-defined]
         await asyncio.to_thread(docs.build, app.openapi())

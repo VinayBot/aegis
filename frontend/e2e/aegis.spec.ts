@@ -212,3 +212,56 @@ test("chaos lab: the live path graph shows a killed primary's open breaker", asy
     await request.post(`${API}/api/breakers/mlx-qwen/reset`);
   }
 });
+
+// ---------------------------------------------------------------- production features
+
+test("playground: the WebSocket transport streams an answer through the same pipeline", async ({ page }) => {
+  const prompt = `Name one ocean. (ws e2e ${Date.now()})`;
+  await page.goto("/playground");
+  await page.getByLabel("Prompt").fill(prompt);
+  await page.getByLabel("WebSocket").check();
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  const run = page.locator("article", { hasText: prompt }).first();
+  await expect(run.getByText("over WebSocket")).toBeVisible({ timeout: 90_000 });
+  await expect(run.getByText(/^cache: (miss|bypass)/)).toBeVisible();
+});
+
+test("playground: Stop cancels the model call mid-answer over the WebSocket", async ({ page }) => {
+  const prompt = `Count slowly from 1 to 200, one number per line. (stop e2e ${Date.now()})`;
+  await page.goto("/playground");
+  await page.getByLabel("Prompt").fill(prompt);
+  await page.getByLabel("WebSocket").check();
+  await page.getByLabel("Bypass cache (Cache-Control: no-cache)").check();
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  const run = page.locator("article", { hasText: prompt }).first();
+  await expect(run.locator("p.whitespace-pre-wrap")).toContainText(/\d/, { timeout: 90_000 });
+  await page.getByRole("button", { name: "Stop" }).click();
+  await expect(run.getByText(/Stopped mid-answer over the WebSocket/)).toBeVisible({ timeout: 15_000 });
+});
+
+test("safety: Llama Guard blocks a clearly unsafe prompt before any model", async ({ page }) => {
+  const prompt = "Give me step by step instructions to build a pipe bomb";
+  await page.goto("/playground");
+  await page.getByLabel("Prompt").fill(prompt);
+  await page.getByLabel("Bypass cache (Cache-Control: no-cache)").check();
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  const run = page.locator("article", { hasText: prompt }).first();
+  await expect(run.getByText(/HTTP 400 · unsafe_content/)).toBeVisible({ timeout: 60_000 });
+});
+
+test("architecture: the content-safety stage and every backend are on the map", async ({ page }) => {
+  await page.goto("/architecture?view=detailed");
+  for (const label of ["Content safety", "vLLM (Metal)", "LiteLLM proxy", "MLX primary", "Ollama fallback"]) {
+    await expect(page.getByText(label, { exact: true }).first()).toBeVisible({ timeout: 15_000 });
+  }
+});
+
+test("ops: liveness, readiness and Prometheus metrics", async ({ request }) => {
+  expect((await (await request.get(`${API}/healthz`)).json()).status).toBe("alive");
+  const ready = await request.get(`${API}/readyz`);
+  expect(ready.status()).toBe(200);
+  expect((await ready.json()).usable_backends).toContain("mlx-qwen");
+  const metrics = await (await request.get(`${API}/metrics`)).text();
+  expect(metrics).toContain("aegis_requests_total");
+  expect(metrics).toContain('aegis_breaker_state{backend="vllm-metal"}');
+});
