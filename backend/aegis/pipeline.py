@@ -19,7 +19,7 @@ import contextlib
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -198,6 +198,8 @@ class Pipeline:
         *,
         no_cache: bool = False,
         client: str = "api",
+        client_ip: str | None = None,
+        trace_headers: Mapping[str, str] | None = None,
     ) -> Prepared:
         cfg = self.s.config.get()
         model = str(body.get("model") or "aegis-chat")
@@ -207,7 +209,7 @@ class Pipeline:
             stream=bool(body.get("stream")),
             no_cache=no_cache,
             client=client,
-            root=telemetry.start_root(model, {}),
+            root=telemetry.start_root(model, {}, trace_headers),
             trace_id="",
             started=time.perf_counter(),
         )
@@ -230,7 +232,7 @@ class Pipeline:
             trace_id=ctx.trace_id,
         )
         try:
-            prepared = await self._run(ctx, cfg, body, api_key, preview)
+            prepared = await self._run(ctx, cfg, body, api_key, preview, client_ip)
         except GatewayError as err:
             return self._fail(ctx, cfg, err)
         except asyncio.CancelledError:
@@ -324,10 +326,11 @@ class Pipeline:
         body: dict[str, Any],
         api_key: str | None,
         preview: str,
+        client_ip: str | None = None,
     ) -> Prepared:
         """The request path, one stage per line. A stage stops the request by raising a
         GatewayError; each stage is a span, emits enter/exit events and records its outcome."""
-        await self._authenticate(ctx, cfg, api_key, preview)
+        await self._authenticate(ctx, cfg, api_key, preview, client_ip)
         messages = self._validate(ctx, cfg, body)
         await self._guard(ctx, messages)
         ctx.params = cfg.effective_params(ctx.model, body)
@@ -351,14 +354,30 @@ class Pipeline:
     # ------------------------------------------------------------------ stages
 
     async def _authenticate(
-        self, ctx: RequestContext, cfg: GatewayConfig, api_key: str | None, preview: str
+        self,
+        ctx: RequestContext,
+        cfg: GatewayConfig,
+        api_key: str | None,
+        preview: str,
+        client_ip: str | None = None,
     ) -> None:
         s = self.s
+        wait = s.auth_failures.retry_after(client_ip)
+        if wait:
+            raise GatewayError(
+                429,
+                "too_many_auth_failures",
+                "Too many failed authentications from this address. Retry later.",
+                outcome="rejected",
+                retry_after=wait,
+            )
         # -- auth
         async with self._stage(ctx, "auth") as rec:
             key_cfg = security.resolve_credential(self.s.settings, cfg, api_key)
             if key_cfg is None:
                 rec["outcome"] = "rejected"
+                if api_key:
+                    s.auth_failures.record(client_ip)
                 raise GatewayError(
                     401, "invalid_api_key", "Unknown or missing API key.", outcome="rejected"
                 )

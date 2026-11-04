@@ -26,6 +26,7 @@ from aegis.ledger import Ledger
 from aegis.metrics import Metrics
 from aegis.ratelimit import RateLimiter
 from aegis.router import Router
+from aegis.security import FailureLimiter
 from aegis.settings import Settings
 
 log = logging.getLogger("aegis")
@@ -102,3 +103,4 @@ class AppState:
     health: dict[str, Any] = field(default_factory=dict)
     started_at: float = 0.0
     safety: SafetyClassifier = field(default_factory=SafetyClassifier)
+    auth_failures: FailureLimiter = field(default_factory=FailureLimiter)

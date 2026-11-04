@@ -46,6 +46,7 @@ Errors (JSON `{"error": {"message", "type", "code", "request_id", "trace_id"}}`)
 | 402 | `budget_exceeded` | tenant over its hard monthly budget |
 | 404 | `model_not_found` | unknown public model name |
 | 429 | `rate_limited` | over the key's tokens per minute (`Retry-After`) |
+| 429 | `too_many_auth_failures` | 20 failed authentications from this address within a minute (`Retry-After`) |
 | 502 | `upstream_rejected` | a backend rejected the request itself (4xx other than 404/429) |
 | 503 | `no_backend_available` | all breakers open, or no slot free within 10 s (`Retry-After`) |
 | 503 | `safety_unavailable` | the safety classifier is down and `safety.on_error: block` |

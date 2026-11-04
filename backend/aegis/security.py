@@ -29,7 +29,9 @@ import ipaddress
 import sys
 import time
 import uuid
-from dataclasses import dataclass
+from collections import deque
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Literal
 
 import jwt
@@ -44,6 +46,40 @@ ADMIN_ENV_KEY_ID = "admin-env"
 
 def digest(key: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()
+
+
+@dataclass
+class FailureLimiter:
+    """Slows down key guessing: a client address with `limit` failed authentications inside
+    `window_s` is refused (429) until the oldest failure ages out. Behind a reverse proxy, run
+    uvicorn with --proxy-headers and --forwarded-allow-ips so the address is the real client's."""
+
+    limit: int = 20
+    window_s: float = 60.0
+    clock: Callable[[], float] = time.monotonic
+    failures: dict[str, deque[float]] = field(default_factory=dict)
+
+    def _recent(self, client: str) -> deque[float]:
+        q = self.failures.setdefault(client, deque())
+        cutoff = self.clock() - self.window_s
+        while q and q[0] < cutoff:
+            q.popleft()
+        return q
+
+    def retry_after(self, client: str | None) -> float:
+        """Seconds until this client may try again; 0 when it is not blocked."""
+        if not client:
+            return 0.0
+        q = self._recent(client)
+        if len(q) < self.limit:
+            return 0.0
+        return max(0.1, q[0] + self.window_s - self.clock())
+
+    def record(self, client: str | None) -> None:
+        if client:
+            self._recent(client).append(self.clock())
+            if len(self.failures) > 10_000:  # bounded memory under a spray of addresses
+                self.failures.pop(next(iter(self.failures)))
 
 
 def plaintext_allowed(settings: Settings) -> bool:
@@ -212,9 +248,30 @@ def _resolve(request: Request | WebSocket) -> Principal | None:
     return principal_for(state.settings, state.config.get(), presented, host, origin)
 
 
+def guard_failures(request: Request | WebSocket) -> None:
+    """429 when this client has failed authentication too often (see FailureLimiter)."""
+    limiter: FailureLimiter = request.app.state.state.auth_failures
+    host = request.client.host if request.client else None
+    wait = limiter.retry_after(host)
+    if wait:
+        raise HTTPException(
+            429,
+            "Too many failed authentications from this address. Retry later.",
+            headers={"Retry-After": str(max(1, round(wait + 0.49)))},
+        )
+
+
+def note_failure(request: Request | WebSocket) -> None:
+    limiter: FailureLimiter = request.app.state.state.auth_failures
+    limiter.record(request.client.host if request.client else None)
+
+
 def require_viewer(request: Request) -> Principal:
+    guard_failures(request)
     principal = _resolve(request)
     if principal is None:
+        if bearer(request.headers) is not None:
+            note_failure(request)  # a wrong key, not merely a missing one
         raise HTTPException(
             401,
             "An API key is required (Authorization: Bearer <key>).",

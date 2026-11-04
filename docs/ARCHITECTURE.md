@@ -55,6 +55,8 @@ WebSocket, the metrics aggregator, the Prometheus exporter and the replay record
 Jaeger and, with keys set, to Langfuse (OTLP + Basic auth), carrying Langfuse's own attributes:
 the trace name, the tenant as user, tags, and the model call as a `generation` with its cost.
 Every log line is JSON with the request id, trace id and tenant of the request that wrote it.
+A caller's W3C `traceparent` header is honoured: the gateway's root span joins the caller's trace,
+so one trace runs from a client app (NEXUS, Veritas) through the gateway to the model.
 
 ## Reliability behaviour
 
@@ -115,6 +117,9 @@ Every log line is JSON with the request id, trace id and tenant of the request t
   (any key): requests and tenants, filtered by tenant in SQL, so another tenant's request id is a
   404. Admin: everything that changes state or spans tenants, including `/ws/events` and
   `/metrics`.
+- **Key guessing.** 20 failed authentications from one address within a minute earn a 429 with
+  `Retry-After` on every entry point (HTTP, WebSocket, token exchange, feedback, control plane).
+  Behind a reverse proxy, uvicorn's `--proxy-headers` makes the address the real client's.
 - **Input bounds.** Body size (streamed, 413), message count, roles, prompt tokens and
   `max_tokens` are checked before any guardrail, cache or model.
 - **Content.** Presidio + regex redaction on input, Llama Guard 3 on input and output, streaming

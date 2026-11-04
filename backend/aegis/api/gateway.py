@@ -155,7 +155,12 @@ async def chat_completions(request: Request) -> Any:
     no_cache = "no-cache" in request.headers.get("cache-control", "").lower()
     client = request.headers.get("x-aegis-client", "api")[:32]
     prepared = await pipeline.handle(
-        body, security.bearer(request.headers), no_cache=no_cache, client=client
+        body,
+        security.bearer(request.headers),
+        no_cache=no_cache,
+        client=client,
+        client_ip=request.client.host if request.client else None,
+        trace_headers=request.headers,
     )
     if prepared.body is not None:
         return JSONResponse(prepared.body, prepared.status, headers=prepared.headers)
@@ -273,7 +278,14 @@ class _ChatSocket:
             await self.send({"type": "cancelled", "id": rid})
 
     async def run(self, rid: str, body: dict[str, Any], no_cache: bool) -> None:
-        prepared = await self.pipeline.handle(body, self.key, no_cache=no_cache, client="websocket")
+        prepared = await self.pipeline.handle(
+            body,
+            self.key,
+            no_cache=no_cache,
+            client="websocket",
+            client_ip=self.ws.client.host if self.ws.client else None,
+            trace_headers=self.ws.headers,
+        )
         if prepared.body is not None:
             await self.send(
                 {"type": "error", "id": rid, "status": prepared.status, **prepared.body}
@@ -311,10 +323,13 @@ class Feedback(BaseModel):
 )
 async def feedback(request: Request, body: Feedback) -> JSONResponse:
     state = request.app.state.state
+    security.guard_failures(request)
     key_cfg = security.resolve_credential(
         state.settings, state.config.get(), security.bearer(request.headers)
     )
     if key_cfg is None:
+        if security.bearer(request.headers) is not None:
+            security.note_failure(request)
         return JSONResponse(
             {"error": {"message": "Unknown or missing API key.", "code": "invalid_api_key"}}, 401
         )
@@ -367,12 +382,15 @@ class TokenRequest(BaseModel):
 )
 async def token(request: Request, body: TokenRequest | None = None) -> JSONResponse:
     state = request.app.state.state
+    security.guard_failures(request)
     presented = security.bearer(request.headers)
     # only a real API key can mint a token: a token cannot extend itself
     key_cfg = security.resolve_key(
         state.config.get(), presented, security.plaintext_allowed(state.settings)
     )
     if key_cfg is None:
+        if presented is not None:
+            security.note_failure(request)
         return JSONResponse(
             {"error": {"message": "An API key is required.", "code": "invalid_api_key"}}, 401
         )

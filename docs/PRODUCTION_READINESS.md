@@ -43,7 +43,7 @@ phrasing ("forget everything you were told before").
 
 | Suite | Result |
 | --- | --- |
-| Backend: unit, HTTP integration against fake model servers and real Redis, SIGSTOP, eval gate, property-based (Hypothesis) | 164 passed, 91% line coverage (CI floor 85%) |
+| Backend: unit, HTTP integration against fake model servers and real Redis, SIGSTOP, eval gate, property-based (Hypothesis) | 168 passed, 91% line coverage (CI floor 85%) |
 | Code health | ruff with complexity <= 12, strict mypy, strict TypeScript, pre-commit |
 | Frontend unit (vitest) | 7 passed |
 | End to end on the real system (Playwright) | 21 passed |
@@ -86,6 +86,19 @@ backend has 4 slots (it had 1, from an older mlx-lm that served one request at a
 | Cache-hit latency | p95 under 300 ms | `aegis_request_duration_seconds{cache="exact"}` |
 | Time to first token on a miss | p95 under 3 s | `aegis_time_to_first_token_seconds` |
 | Breaker recovery | a healed backend closes within open_seconds + 1 probe | `aegis_breaker_transitions_total` |
+
+## Alerts
+
+`infra/prometheus/alerts.yml`, validated and unit-tested with `promtool` in CI (`make alerts`):
+
+| Alert | Fires when | Severity |
+| --- | --- | --- |
+| AegisErrorBudgetFastBurn | error ratio over 14.4 x 0.5% on both 1 h and 5 min windows (two days' budget in an hour) | page |
+| AegisErrorBudgetSlowBurn | over 6 x 0.5% on 6 h and 30 min windows | ticket |
+| AegisNoBackendAvailable | every breaker open for 1 min | page |
+| AegisBreakerOpen | one breaker open for 2 min | ticket |
+| AegisTimeToFirstTokenSlow / AegisCacheHitLatencyHigh | the latency SLOs above are missed for 10 min | ticket |
+| AegisRateLimitPressure, AegisSafetyBlockSpike, AegisAnswersRatedDown | rate-limit pressure, unusual Llama Guard blocking, over 30% thumbs-down | info / ticket |
 
 ## Runbook
 

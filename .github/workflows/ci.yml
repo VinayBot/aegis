@@ -50,6 +50,18 @@ jobs:
       - run: npm run build
       - run: npm audit --omit=dev --audit-level=high
 
+  alerts:
+    # The Prometheus alerting rules: valid, and firing (or not) as their unit tests expect.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: promtool check + test
+        run: |
+          docker run --rm -v "$PWD/infra/prometheus":/r -w /r --entrypoint promtool \
+            prom/prometheus:v2.55.1 check rules alerts.yml
+          docker run --rm -v "$PWD/infra/prometheus":/r -w /r --entrypoint promtool \
+            prom/prometheus:v2.55.1 test rules alerts_test.yml
+
   image:
     # The production image: build it, run it with no model servers at all, and check that it is
     # alive, honestly not ready, and secure by default (control plane refuses an anonymous caller).

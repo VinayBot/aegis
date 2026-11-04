@@ -25,7 +25,7 @@ and events.
 | 21 | Streaming | SSE relay from an async generator, OpenAI chunk format | `test_streams_openai_sse_*`; `scripts/demo_stream.sh` |
 | 22 | vLLM local deployment | Real `vllm serve` (V1 engine, paged attention, continuous batching) via vllm-metal, model `aegis-vllm` | [Batching benchmark](docs/evidence/serving_bench.json): 249 → 1,036 tok/s from 1 to 8 concurrent requests (`make bench-serving`) |
 | 22 | Langfuse tracing | OTLP + Basic auth to Langfuse beside Jaeger, with Langfuse trace/user/generation attributes ([telemetry.py](backend/aegis/telemetry.py)); user feedback ratings as Langfuse scores (`POST /v1/feedback`, [feedback.py](backend/aegis/feedback.py)); self-hosted stack in [infra/langfuse](infra/langfuse/docker-compose.yml) | Verified on Langfuse 4.67.0: [traces](docs/evidence/langfuse-traces.png), [one trace](docs/evidence/langfuse-trace.png); `test_feedback_becomes_a_langfuse_score` |
-| 22 | OpenTelemetry | One trace per request, one span per stage, GenAI semantic conventions; Prometheus `/metrics` ([prom.py](backend/aegis/prom.py)) | Traces tab; `test_prometheus_metrics` |
+| 22 | OpenTelemetry | One trace per request, one span per stage, GenAI semantic conventions, W3C `traceparent` propagation from callers; Prometheus `/metrics` ([prom.py](backend/aegis/prom.py)) with SLO burn-rate alerts ([alerts.yml](infra/prometheus/alerts.yml), unit-tested with promtool) | Traces tab; `test_a_callers_traceparent_continues_into_the_gateway`; `make alerts` |
 | 23 | Semantic cache (Redis) | Redis Stack HNSW, bge-small, threshold 0.95, partitioned by tenant and context ([cache.py](backend/aegis/cache.py)) | Eval: precision 1.0, recall 1.0 on 30 labelled pairs |
 | 23 | LiteLLM proxy | The real `litellm --config` server ([infra/litellm](infra/litellm/config.yaml)) as backend `litellm-proxy`, plus the SDK adapter | `aegis-litellm-proxy` model; e2e LiteLLM test |
 | 23 | Circuit breakers | Closed/open/half-open; trips on a timeout, 3 consecutive errors, or a 50% failure rate over 30 s; one live probe; self-healing when idle ([breaker.py](backend/aegis/breaker.py), [health.py](backend/aegis/health.py)) | `test_breaker_opens_on_a_failure_rate_over_the_window`; SIGSTOP test |
@@ -64,7 +64,7 @@ Other targets:
 
 | Target | What it does |
 | --- | --- |
-| `make test` | backend (164, including property-based) and frontend tests; needs `make infra` for Redis |
+| `make test` | backend (168, including property-based) and frontend tests; needs `make infra` for Redis |
 | `make evals` / `make evals-live` | the evaluation gate (offline / with Llama Guard) |
 | `make e2e` | 21 browser tests against `make dev` |
 | `make loadtest` | throughput and latency percentiles against `make dev` |

@@ -4,7 +4,7 @@
 VLLM_WHEEL := https://github.com/vllm-project/vllm/releases/download/v0.32.0/vllm-0.32.0%2Bcpu-cp38-abi3-macosx_11_0_arm64.whl
 VLLM_METAL_WHEEL := https://github.com/vllm-project/vllm-metal/releases/download/v0.32.0/vllm_metal-0.32.0-cp312-cp312-macosx_15_0_arm64.whl
 
-.PHONY: perf sweep setup setup-serving evals evals-live loadtest image bench-serving langfuse-up langfuse-down infra dev test test-backend test-frontend e2e lint typecheck build serve record-fixture memory assets clean
+.PHONY: perf sweep setup setup-serving evals evals-live loadtest image bench-serving alerts langfuse-up langfuse-down infra dev test test-backend test-frontend e2e lint typecheck build serve record-fixture memory assets clean
 
 setup: ## install everything (Python deps, spaCy model, Node deps, Playwright browser, models)
 	cd backend && uv sync --extra litellm  # LiteLLM is the optional adapter; installed so it can be demonstrated
@@ -103,3 +103,7 @@ image: ## the production image (gateway + built site, non-root) and its smoke te
 
 bench-serving: ## vLLM vs MLX throughput at 1, 2, 4 and 8 concurrent requests (needs `make dev`)
 	cd backend && uv run python ../scripts/bench_serving.py --out ../docs/evidence/serving_bench.json
+
+alerts: ## validate and unit-test the Prometheus alerting rules (promtool in Docker)
+	docker run --rm -v "$(CURDIR)/infra/prometheus":/r -w /r --entrypoint promtool prom/prometheus:v2.55.1 check rules alerts.yml
+	docker run --rm -v "$(CURDIR)/infra/prometheus":/r -w /r --entrypoint promtool prom/prometheus:v2.55.1 test rules alerts_test.yml

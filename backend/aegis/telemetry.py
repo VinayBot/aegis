@@ -16,13 +16,13 @@ The upstream model call follows the GenAI semantic conventions: span name `chat 
 from __future__ import annotations
 
 import base64
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from opentelemetry import context as otel_context
-from opentelemetry import trace
+from opentelemetry import propagate, trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor, SpanExporter
@@ -116,7 +116,13 @@ def stage_span(parent: Span, stage: str, **attributes: Any) -> Iterator[Span]:
         yield span
 
 
-def start_root(model: str, attributes: dict[str, Any]) -> Span:
+def start_root(
+    model: str, attributes: dict[str, Any], carrier: Mapping[str, str] | None = None
+) -> Span:
+    """The request's root span. With a W3C `traceparent` in `carrier` (the caller's headers) it
+    joins the caller's trace, so one trace runs from the client app through the gateway to the
+    model; without one it starts a new trace."""
+    parent = propagate.extract(dict(carrier)) if carrier else otel_context.Context()
     return tracer().start_span(
         "POST /v1/chat/completions",
         kind=SpanKind.SERVER,
@@ -127,7 +133,7 @@ def start_root(model: str, attributes: dict[str, Any]) -> Span:
             "langfuse.observation.type": "span",
             **_clean(attributes),
         },
-        context=otel_context.Context(),
+        context=parent,
     )
 
 
