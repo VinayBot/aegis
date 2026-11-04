@@ -20,6 +20,22 @@ _PATTERNS = [
     re.compile(r"act as (if )?(you are )?(an? )?(unrestricted|jailbroken)\b", re.I),
     re.compile(r"</?(system|assistant|user)>", re.I),
     re.compile(r"\bDAN\b"),
+    # families found missing by the eval (evals/data/injection.jsonl): forgetting or ignoring the
+    # rules in other words, and asking to override the safety configuration
+    re.compile(
+        r"\b(forget|ignore|drop|abandon)\b[^.?!]{0,30}\b(your|the|all|any|previous|prior|earlier)"
+        r"\b[^.?!]{0,20}\b(rules|instructions|guidelines|directives|constraints)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\boverride\b[^.?!]{0,20}\b(safety|content|system|your)\b[^.?!]{0,20}"
+        r"\b(settings|rules|filters|guardrails|restrictions|policies|instructions)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(answer|respond|reply|comply)\b[^.?!]{0,20}\bwithout (any )?(restrictions|rules|filters|limits)\b",
+        re.I,
+    ),
     re.compile(r"you are now (in )?(developer|dan|unfiltered) mode", re.I),
     re.compile(
         r"\b(pretend|act|role-?play|imagine|behave)\b[^.?!]{0,60}\b("

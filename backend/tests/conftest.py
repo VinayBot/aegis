@@ -126,6 +126,14 @@ def write_config(tmp: Path, ports: dict[str, int], **overrides: Any) -> Path:
             "k-small": {"tenant": "small", "tpm": 200, "budget": {"soft": 10, "hard": 20}},
             "k-broke": {"tenant": "broke", "tpm": 100000, "budget": {"soft": 0.0, "hard": 0.0}},
             "k-other": {"tenant": "other", "tpm": 100000, "budget": {"soft": 10, "hard": 20}},
+            # the key the AEGIS assistant asks the gateway with
+            "aegis-assistant-key": {
+                "tenant": "aegis-bot",
+                "tpm": 100000,
+                "budget": {"soft": 10, "hard": 20},
+            },
+            # the key the built-in rate-limit flood sends with
+            "aegis-flood-key": {"tenant": "flood", "tpm": 300, "budget": {"soft": 10, "hard": 20}},
             "k-admin": {
                 "id": "ops",
                 "tenant": "ops",

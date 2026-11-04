@@ -551,3 +551,17 @@ def test_p_unsafe_from_logprobs() -> None:
 
     assert abs((p_unsafe_of(choice(0.692)) or 0) - 0.692) < 1e-6
     assert p_unsafe_of({"message": {"content": "safe"}}) is None  # no logprobs: label decides
+
+
+def test_config_reads_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aegis.config import expand_env
+
+    monkeypatch.delenv("AEGIS_MODEL_HOST", raising=False)
+    assert expand_env("http://${AEGIS_MODEL_HOST:-127.0.0.1}:8081") == "http://127.0.0.1:8081"
+    monkeypatch.setenv("AEGIS_MODEL_HOST", "host.docker.internal")
+    assert (
+        expand_env("http://${AEGIS_MODEL_HOST:-127.0.0.1}:8081")
+        == "http://host.docker.internal:8081"
+    )
+    with pytest.raises(ValueError):
+        expand_env("${AEGIS_SURELY_UNSET_VAR}")

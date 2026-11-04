@@ -4,7 +4,7 @@
 VLLM_WHEEL := https://github.com/vllm-project/vllm/releases/download/v0.32.0/vllm-0.32.0%2Bcpu-cp38-abi3-macosx_11_0_arm64.whl
 VLLM_METAL_WHEEL := https://github.com/vllm-project/vllm-metal/releases/download/v0.32.0/vllm_metal-0.32.0-cp312-cp312-macosx_15_0_arm64.whl
 
-.PHONY: perf sweep setup setup-serving evals loadtest langfuse-up langfuse-down infra dev test test-backend test-frontend e2e lint typecheck build serve record-fixture memory assets clean
+.PHONY: perf sweep setup setup-serving evals evals-live loadtest image langfuse-up langfuse-down infra dev test test-backend test-frontend e2e lint typecheck build serve record-fixture memory assets clean
 
 setup: ## install everything (Python deps, spaCy model, Node deps, Playwright browser, models)
 	cd backend && uv sync --extra litellm  # LiteLLM is the optional adapter; installed so it can be demonstrated
@@ -30,6 +30,12 @@ test: test-backend test-frontend ## unit + integration tests (needs `make infra`
 
 test-backend:
 	cd backend && uv run pytest -q
+
+evals: ## the evaluation gate: semantic cache, PII, injection, output redaction (offline)
+	cd backend && uv run python -m evals.run
+
+evals-live: ## the evaluation gate plus Llama Guard against the local Ollama
+	cd backend && uv run python -m evals.run --live
 
 test-frontend:
 	cd frontend && npm test
@@ -82,3 +88,15 @@ langfuse-up: ## self-hosted Langfuse v4 on :3100 (needs ~4 GB in Docker: colima 
 
 langfuse-down:
 	docker-compose -f infra/langfuse/docker-compose.yml down
+
+loadtest: ## throughput, latency and TTFT percentiles against `make dev` (writes docs/evidence/loadtest.json)
+	cd backend && uv run python ../scripts/loadtest.py --requests 120 --concurrency 12 --out ../docs/evidence/loadtest.json
+
+image: ## the production image (gateway + built site, non-root) and its smoke test
+	docker build -t aegis-gateway:local .
+	docker rm -f aegis-smoke >/dev/null 2>&1 || true
+	docker run -d --name aegis-smoke -p 127.0.0.1:8002:8000 aegis-gateway:local
+	for i in $$(seq 1 60); do curl -fs http://127.0.0.1:8002/healthz && break; sleep 2; done
+	@test "$$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8002/api/architecture)" = 401 && echo " control plane refuses anonymous callers"
+	@test "$$(docker exec aegis-smoke id -u)" = 10001 && echo "runs as a non-root user"
+	docker rm -f aegis-smoke

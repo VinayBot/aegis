@@ -17,6 +17,9 @@ import numpy as np
 DIM = 384
 
 
+BATCH = 16  # measured: 300 chunks peak at 444 MB instead of 1.49 GB with the default 256
+
+
 class Embedder:
     def __init__(self, model_name: str) -> None:
         self.model_name = model_name
@@ -42,7 +45,9 @@ class Embedder:
         assert self._model is not None
         start = time.perf_counter()
         with self._lock:  # one ONNX session; serialise access
-            vectors = np.asarray(list(self._model.embed(texts)), dtype=np.float32)
+            # small batches: fastembed's default (256) makes ONNX allocate activations for the
+            # whole batch at once, a ~1.5 GB peak when the docs index is built at startup
+            vectors = np.asarray(list(self._model.embed(texts, batch_size=BATCH)), dtype=np.float32)
         self.latencies_ms.append((time.perf_counter() - start) * 1000)
         norms = np.linalg.norm(vectors, axis=1, keepdims=True)
         return vectors / np.maximum(norms, 1e-9)

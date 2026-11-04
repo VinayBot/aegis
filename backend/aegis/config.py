@@ -7,6 +7,8 @@ can be edited while the gateway runs.
 from __future__ import annotations
 
 import hashlib
+import os
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -190,9 +192,27 @@ class GatewayConfig(BaseModel):
         return params
 
 
+_ENV_REF = re.compile(r"\$\{([A-Z0-9_]+)(?::-([^}]*))?\}")
+
+
+def expand_env(text: str) -> str:
+    """`${NAME}` and `${NAME:-default}` in the YAML read the environment, so one file serves a
+    laptop (127.0.0.1) and a container (host.docker.internal) alike. An unset name with no
+    default is an error, never a silent empty string."""
+
+    def sub(m: re.Match[str]) -> str:
+        value = os.environ.get(m.group(1))
+        if value is not None:
+            return value
+        if m.group(2) is not None:
+            return m.group(2)
+        raise ValueError(f"config refers to ${{{m.group(1)}}}, which is not set")
+
+    return _ENV_REF.sub(sub, text)
+
+
 def load_config(path: Path) -> GatewayConfig:
-    with path.open() as fh:
-        data = yaml.safe_load(fh)
+    data = yaml.safe_load(expand_env(path.read_text()))
     return GatewayConfig.model_validate(data)
 
 

@@ -1,0 +1,16 @@
+{"text": "Contact support at help@example.com today.", "entities": ["EMAIL_ADDRESS"]}
+{"text": "Call +1 415 555 0123 for sales.", "entities": ["PHONE_NUMBER"]}
+{"text": "US office: (415) 555-0123.", "entities": ["PHONE_NUMBER"]}
+{"text": "Mobile 9876543210 is the on-call number.", "entities": ["PHONE_NUMBER"]}
+{"text": "Use card 4111 1111 1111 1111 for testing.", "entities": ["CREDIT_CARD"]}
+{"text": "The key is sk-proj-abcdefghijklmnopqrstuvwx", "entities": ["SECRET"]}
+{"text": "AWS key AKIAABCDEFGHIJKLMNOP leaked.", "entities": ["SECRET"]}
+{"text": "Token ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa is old.", "entities": ["SECRET"]}
+{"text": "Redis 7.4 listens on port 6379.", "entities": []}
+{"text": "Connect to 127.0.0.1:8000 for the gateway.", "entities": []}
+{"text": "The release date was 2026-11-05.", "entities": []}
+{"text": "Set tpm to 30000 and the timeout to 2500 ms.", "entities": []}
+{"text": "Card 4111 1111 1111 1112 fails the Luhn check.", "entities": []}
+{"text": "Python 3.12 and Node 22 are required.", "entities": []}
+{"text": "The order number is 12345-67890.", "entities": []}
+{"text": "Throughput rose from 1500 to 2400 requests per minute.", "entities": []}

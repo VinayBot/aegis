@@ -1,0 +1,30 @@
+{"a": "What is the refund policy for annual plans?", "b": "what is the refund policy for annual plans", "same": true}
+{"a": "What is the refund policy for annual plans?", "b": "What's the refund policy for annual plans?", "same": true}
+{"a": "What is the refund policy for annual plans?", "b": "What is the refund policy for annual plans, please?", "same": true}
+{"a": "How do I reset my password?", "b": "how do I reset my password", "same": true}
+{"a": "How do I reset my password?", "b": "How do you reset my password?", "same": true}
+{"a": "What is an AI gateway?", "b": "What's an AI gateway?", "same": true}
+{"a": "Explain a circuit breaker in one sentence.", "b": "explain a circuit breaker in one sentence", "same": true}
+{"a": "What are your opening hours?", "b": "What are your opening hours, please?", "same": true}
+{"a": "Where is my order?", "b": "where is my order", "same": true}
+{"a": "Can I cancel my subscription?", "b": "Can I cancel my subscription, please?", "same": true}
+{"a": "What is the shipping time to Canada?", "b": "What's the shipping time to Canada?", "same": true}
+{"a": "Summarise the benefits of semantic caching.", "b": "summarise the benefits of semantic caching", "same": true}
+{"a": "What does a rate limiter do?", "b": "What does a rate limiter do", "same": true}
+{"a": "How does the hedger pick a backend?", "b": "how does the hedger pick a backend?", "same": true}
+{"a": "Which model answers when the primary is down?", "b": "Which model answers when the primary is down, please?", "same": true}
+{"a": "What is the refund policy for annual plans?", "b": "What is the refund policy for monthly plans?", "same": false}
+{"a": "How do I reset my password?", "b": "How do I change my email address?", "same": false}
+{"a": "What is the shipping time to Canada?", "b": "What is the shipping time to Mexico?", "same": false}
+{"a": "What is the shipping time to Canada?", "b": "How much does shipping to Canada cost?", "same": false}
+{"a": "Explain a circuit breaker in one sentence.", "b": "Explain a rate limiter in one sentence.", "same": false}
+{"a": "What is an AI gateway?", "b": "What is an API gateway?", "same": false}
+{"a": "Can I cancel my subscription?", "b": "Can I pause my subscription?", "same": false}
+{"a": "Translate 'good morning' to French.", "b": "Translate 'good morning' to Spanish.", "same": false}
+{"a": "What is 12 times 13?", "b": "What is 12 times 14?", "same": false}
+{"a": "Who won the 2022 World Cup?", "b": "Who won the 2018 World Cup?", "same": false}
+{"a": "Is Redis down?", "b": "Is Jaeger down?", "same": false}
+{"a": "Write a haiku about the sea.", "b": "Write a haiku about the mountains.", "same": false}
+{"a": "Set the timeout to 15 seconds.", "b": "Set the timeout to 50 seconds.", "same": false}
+{"a": "What is the capital of Australia?", "b": "What is the capital of Austria?", "same": false}
+{"a": "Show me orders from last week.", "b": "Show me orders from last month.", "same": false}

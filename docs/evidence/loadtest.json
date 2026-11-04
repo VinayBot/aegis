@@ -1,0 +1,65 @@
+{
+  "run_id": 1793820775,
+  "phases": [
+    {
+      "phase": "overhead (cache hits)",
+      "requests": 60,
+      "concurrency": 12,
+      "wall_s": 0.48,
+      "throughput_rps": 125.93,
+      "errors": 0,
+      "status": {
+        "200": 60
+      },
+      "cache": {
+        "hit": 60
+      },
+      "backends": {
+        "cache (mlx-qwen)": 60
+      },
+      "latency_ms": {
+        "p50": 48.6,
+        "p95": 295.4,
+        "p99": 296.5,
+        "mean": 93.0
+      },
+      "ttft_ms": {
+        "p50": 48.3,
+        "p95": 294.4
+      }
+    },
+    {
+      "phase": "mixed workload",
+      "requests": 120,
+      "concurrency": 12,
+      "wall_s": 14.12,
+      "throughput_rps": 8.5,
+      "errors": 0,
+      "status": {
+        "200": 120
+      },
+      "cache": {
+        "miss": 18,
+        "coalesced": 25,
+        "semantic": 13,
+        "hit": 64
+      },
+      "backends": {
+        "mlx-qwen": 19,
+        "ollama-llama": 24,
+        "cache (mlx-qwen)": 60,
+        "cache (ollama-llama)": 17
+      },
+      "latency_ms": {
+        "p50": 28.6,
+        "p95": 6815.8,
+        "p99": 8141.9,
+        "mean": 1364.2
+      },
+      "ttft_ms": {
+        "p50": 25.2,
+        "p95": 5546.9
+      }
+    }
+  ]
+}

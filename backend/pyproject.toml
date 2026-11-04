@@ -38,6 +38,8 @@ dev = [
   "types-pyyaml",
   "types-psutil",
   "websockets>=13",
+  "pytest-cov>=6.0",
+  "pip-audit>=2.7",
 ]
 
 [build-system]
@@ -67,7 +69,7 @@ python_version = "3.12"
 ignore_missing_imports = true
 check_untyped_defs = true
 warn_unused_ignores = true
-packages = ["aegis"]
+packages = ["aegis", "evals"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
