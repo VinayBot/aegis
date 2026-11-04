@@ -96,8 +96,11 @@ Every log line is JSON with the request id, trace id and tenant of the request t
 
 - **Secure by default.** `AEGIS_ENV` defaults to `production`: the control plane needs an admin
   credential (a YAML key with `role: admin`, or `AEGIS_ADMIN_KEY`), chaos is refused even if
-  switched on, and logs are JSON. `scripts/dev.sh` sets `dev`, where a loopback caller is the
-  local operator, so the demo site needs no key. Loopback is never trusted in production.
+  switched on, plaintext keys in the YAML are ignored (only `sha256:` entries authenticate, so
+  the repo's public demo keys cannot), and logs are JSON. `scripts/dev.sh` sets `dev`, where a
+  loopback caller is the local operator, so the demo site needs no key, unless the browser says
+  the request came from another website (Origin check: no CSRF or WebSocket hijack from a page
+  open in the same browser). Loopback is never trusted in production.
 - **Keys.** YAML entries may be `sha256:<hex>`; lookup hashes the presented key and compares
   against every entry with `hmac.compare_digest`. Only a key's public `id` leaves `security.py`:
   ledger rows, Redis key names, events, logs and every API response use it. `/api/config` masks

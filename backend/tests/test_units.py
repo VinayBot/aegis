@@ -464,8 +464,10 @@ def test_access_rules() -> None:
             },
         }
     )
-    prod, dev = Settings(), Settings(env="dev")
-    assert prod.env == "production"  # the default
+    strict, dev = Settings(), Settings(env="dev")
+    assert strict.env == "production"  # the default
+    assert principal_for(strict, cfg, "tenant-key", "10.0.0.8") is None  # plaintext ignored
+    prod = Settings(allow_plaintext_keys=True)
     assert principal_for(prod, cfg, None, "127.0.0.1") is None  # loopback means nothing in prod
     local = principal_for(dev, cfg, None, "127.0.0.1")
     assert local is not None and local.is_admin
@@ -565,3 +567,26 @@ def test_config_reads_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     with pytest.raises(ValueError):
         expand_env("${AEGIS_SURELY_UNSET_VAR}")
+
+
+def test_stream_redactor_cannot_be_made_slow() -> None:
+    """Regression: a nested-quantifier regex backtracked exponentially on "(1) (1) ... x"."""
+    from aegis.guardrails.output import StreamRedactor
+
+    r = StreamRedactor()
+    start = time.perf_counter()
+    out = "".join(r.feed("(1) ") for _ in range(60)) + r.feed("x ") + r.flush()
+    assert time.perf_counter() - start < 0.2
+    assert out.count("(1)") == 60
+
+
+def test_a_secret_in_minified_json_is_caught_across_chunks() -> None:
+    """No whitespace for hundreds of characters: the cut falls on a JSON break, never mid-key."""
+    from aegis.guardrails.output import StreamRedactor
+
+    body = '{"config":{"region":"ap-south-1","retries":3,' + '"pad":"' + "a" * 120 + '",'
+    body += '"key":"sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"}}'
+    for size in (7, 13, 40):
+        r = StreamRedactor()
+        out = "".join(r.feed(body[i : i + size]) for i in range(0, len(body), size)) + r.flush()
+        assert "sk-proj" not in out and '"key":"<SECRET>"' in out, size

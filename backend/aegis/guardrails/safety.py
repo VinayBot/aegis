@@ -101,13 +101,19 @@ def p_unsafe_of(choice: dict[str, Any]) -> float | None:
 
 
 def _conversation(messages: list[dict[str, Any]], max_chars: int = 6000) -> list[dict[str, str]]:
-    """Llama Guard takes alternating user/assistant turns; system and tool turns are context the
-    gateway does not classify. The latest turns matter most, so the tail is kept."""
-    turns = [
-        {"role": m["role"], "content": message_text(m)}
-        for m in messages
-        if m.get("role") in ("user", "assistant") and message_text(m)
-    ]
+    """Llama Guard takes alternating user/assistant turns. Everything the client controls is
+    classified: system, developer and tool messages are folded into the user turn beside them,
+    so a hazardous instruction cannot hide in a system prompt. The tail is kept when long."""
+    turns: list[dict[str, str]] = []
+    for m in messages:
+        text = message_text(m)
+        if not text:
+            continue
+        role = "assistant" if m.get("role") == "assistant" else "user"
+        if turns and turns[-1]["role"] == role:
+            turns[-1]["content"] += "\n\n" + text
+        else:
+            turns.append({"role": role, "content": text})
     out: list[dict[str, str]] = []
     total = 0
     for turn in reversed(turns):

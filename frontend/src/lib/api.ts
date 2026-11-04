@@ -121,12 +121,18 @@ export function wsChat(
   return new Promise((resolve) => {
     const ws = new WebSocket(url);
     const out: StreamResult = { status: 0, headers: {}, text: "", summary: null, error: null };
-    const finish = () => { ws.close(); resolve(out); };
+    let settled = false;
+    const finish = () => { if (settled) return; settled = true; ws.close(); resolve(out); };
     opts.signal?.addEventListener("abort", () => {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "cancel", id: "pg" }));
     });
     ws.onopen = () => ws.send(JSON.stringify({ type: "chat", id: "pg", no_cache: opts.noCache, body: { ...body, stream: true } }));
-    ws.onerror = () => { out.error = { code: "websocket_error", message: "WebSocket failed" }; resolve(out); };
+    ws.onerror = () => { out.error = { code: "websocket_error", message: "WebSocket failed" }; finish(); };
+    // the server closed without a final frame (a restart, a crash): never leave the caller waiting
+    ws.onclose = () => {
+      if (!settled) out.error = out.error ?? { code: "websocket_closed", message: "The connection closed before the answer finished" };
+      finish();
+    };
     ws.onmessage = (ev) => {
       const msg = JSON.parse(String(ev.data));
       if (msg.type === "start") {

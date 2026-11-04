@@ -19,7 +19,7 @@ import contextlib
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -96,6 +96,9 @@ class Prepared:
     headers: dict[str, str]
     events: AsyncIterator[tuple[str, dict[str, Any]]] | None = None
     body: dict[str, Any] | None = None
+    # call when the client leaves before `events` is first iterated: frees the backend slot and
+    # the coalescing flight and records the request. A no-op once streaming has started.
+    abandon: Callable[[], Awaitable[None]] | None = None
 
 
 def price_of(price: Price, tokens_in: int, tokens_out: int) -> float:
@@ -226,9 +229,61 @@ class Pipeline:
             trace_id=ctx.trace_id,
         )
         try:
-            return await self._run(ctx, cfg, body, api_key, preview)
+            prepared = await self._run(ctx, cfg, body, api_key, preview)
         except GatewayError as err:
             return self._fail(ctx, cfg, err)
+        except asyncio.CancelledError:
+            # the client left before the first token (a WebSocket cancel, a disconnect): settle
+            # the rate-limit reservation, end the trace and record it, then let the cancel through
+            self._client_left(ctx, cfg, "before the first token")
+            raise
+        except Exception as exc:  # a bug must still produce a recorded, traced 500
+            request_log.exception("unexpected error in the request path")
+            return self._fail(
+                ctx, cfg, GatewayError(500, "internal", f"internal error: {type(exc).__name__}")
+            )
+        if prepared.events is not None and prepared.abandon is None:
+            prepared.events, prepared.abandon = self._track(ctx, cfg, prepared.events)
+        return prepared
+
+    def _client_left(
+        self, ctx: RequestContext, cfg: GatewayConfig, when: str, routed: Routed | None = None
+    ) -> None:
+        self._finish(
+            ctx,
+            cfg,
+            status="error",
+            http_status=499,
+            backend=routed.attempt.rt.name if routed else None,
+            cache="miss",
+            content="",
+            usage=None,
+            error=f"client_closed: left {when}",
+            routed=routed,
+        )
+
+    def _track(
+        self,
+        ctx: RequestContext,
+        cfg: GatewayConfig,
+        events: AsyncIterator[tuple[str, dict[str, Any]]],
+    ) -> tuple[AsyncIterator[tuple[str, dict[str, Any]]], Callable[[], Awaitable[None]]]:
+        """Cache replays and coalesced followers: record the request if it is never streamed."""
+        started = False
+
+        async def tracked() -> AsyncIterator[tuple[str, dict[str, Any]]]:
+            nonlocal started
+            started = True
+            async for item in events:
+                yield item
+
+        async def abandon() -> None:
+            nonlocal started
+            if not started:
+                started = True
+                self._client_left(ctx, cfg, "before the stream started")
+
+        return tracked(), abandon
 
     def _fail(self, ctx: RequestContext, cfg: GatewayConfig, err: GatewayError) -> Prepared:
         headers = self._base_headers(ctx)
@@ -272,7 +327,9 @@ class Pipeline:
         s = self.s
         # -- auth
         async with self._stage(ctx, "auth") as rec:
-            key_cfg = security.resolve_key(cfg, api_key)
+            key_cfg = security.resolve_key(
+                cfg, api_key, security.plaintext_allowed(self.s.settings)
+            )
             if key_cfg is None:
                 rec["outcome"] = "rejected"
                 raise GatewayError(
@@ -532,7 +589,21 @@ class Pipeline:
                 "x-aegis-failovers": str(len(routed.failovers)),
             }
         )
-        return Prepared(200, headers, events=self._lead(ctx, cfg, routed, flight, keys, vector))
+        state = {"started": False}
+        events = self._lead(ctx, cfg, routed, flight, keys, vector, state)
+
+        async def abandon() -> None:
+            if state["started"]:
+                return  # the stream's own cleanup runs
+            state["started"] = True
+            task = routed.attempt.task
+            if task is not None and not task.done():
+                task.cancel()  # cuts the upstream call and frees the backend slot
+            await flight.finish(ConnectionAbortedError("the leader's client left"))
+            s.coalescer.release(flight)
+            self._client_left(ctx, cfg, "before the stream started", routed)
+
+        return Prepared(200, headers, events=events, abandon=abandon)
 
     def _check_limits(
         self, cfg: GatewayConfig, body: dict[str, Any], messages: list[dict[str, Any]]
@@ -546,7 +617,13 @@ class Pipeline:
                 f"{len(messages)} messages; the limit is {lim.max_messages}.",
                 outcome="rejected",
             )
-        bad = sorted({str(m.get("role")) for m in messages if m.get("role") not in ROLES})
+        bad = sorted(
+            {
+                str(m.get("role"))
+                for m in messages
+                if not isinstance(m.get("role"), str) or m["role"] not in ROLES
+            }
+        )
         if bad:
             raise GatewayError(400, "invalid_request", f"Unknown message role(s): {bad}.")
         for field_name in ("max_tokens", "max_completion_tokens"):
@@ -693,7 +770,11 @@ class Pipeline:
         flight: Flight,
         keys: CacheKeys,
         vector: Any,
+        state: dict[str, bool],
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+        if state["started"]:
+            return  # abandoned before the first iteration: everything is already settled
+        state["started"] = True
         s = self.s
         backend = routed.attempt.rt.name
         parts: list[str] = []

@@ -169,6 +169,9 @@ class GatewayConfig(BaseModel):
         chain = self.models[model].chain
         defaults = self.backends[chain[0]].defaults if chain else {}
         params: dict[str, Any] = {}
+        # OpenAI's newer name for the output cap: one canonical field, understood by every backend
+        if request.get("max_tokens") is None and request.get("max_completion_tokens") is not None:
+            request = {**request, "max_tokens": request["max_completion_tokens"]}
         for key in (
             "temperature",
             "top_p",
@@ -189,6 +192,8 @@ class GatewayConfig(BaseModel):
                 value = defaults.get(key)
             if value is not None:
                 params[key] = value
+        # every request runs with an output cap, even on a backend with no default
+        params.setdefault("max_tokens", self.limits.max_output_tokens)
         return params
 
 

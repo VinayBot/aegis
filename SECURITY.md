@@ -10,7 +10,8 @@ rather than an issue. Expect a reply within a week.
 | Threat | Control | Where |
 | --- | --- | --- |
 | Unauthenticated control of the gateway | Production mode by default: admin credential required for every state-changing or cross-tenant route; chaos refused | `aegis/security.py`, `aegis/main.py` |
-| Key theft from config, logs or APIs | `sha256:` key entries, constant-time lookup, public key ids everywhere else, masked backend credentials, backend keys from the environment | `aegis/security.py`, `aegis/config.py` |
+| Key theft from config, logs or APIs | `sha256:` key entries (production ignores plaintext ones), constant-time lookup, public key ids everywhere else, masked backend credentials, backend keys from the environment | `aegis/security.py`, `aegis/config.py` |
+| Cross-site requests to a dev gateway | Loopback is the operator only without a foreign `Origin` | `aegis/security.py` |
 | Cross-tenant data access (IDOR) | Tenant filter in SQL for every tenant-visible read; tenant in every cache key | `aegis/ledger.py`, `aegis/cache.py` |
 | Resource exhaustion | Streamed body limit, message, prompt and output token bounds; per-key token bucket; per-tenant budget; slot limits and queue deadline per backend | `aegis/api/gateway.py`, `aegis/pipeline.py`, `aegis/ratelimit.py` |
 | Personal data reaching a model or a trace | Presidio + regex redaction before any cache, embedder or model; traces and logs carry counts only | `aegis/guardrails/pii.py` |

@@ -1,7 +1,7 @@
 # Peer audit
 
 A guide for a classmate auditing AEGIS, and the record of the audits done so far. Each check has
-the command or the place to look, so an audit takes about 30 minutes and needs no prior context.
+the command or the place to look, so an audit takes about 30 minutes and needs no prior context. 24 findings are recorded and fixed below.
 
 ## How to audit (for the reviewer)
 
@@ -33,7 +33,7 @@ finding. Please add your findings to the table at the end (or open an issue).
 
 | Check | How |
 | --- | --- |
-| Tests | `make test` (backend 138, frontend 7), `make e2e` (21) |
+| Tests | `make test` (backend 148, frontend 8), `make e2e` (21) |
 | Evaluation gate | `make evals-live`: five suites, all PASS |
 | Probes and metrics | `curl localhost:8000/readyz`, `curl localhost:8000/metrics \| head` |
 | Clean shutdown | Ctrl-C `make dev` with the site open: the gateway exits within 5 s |
@@ -72,6 +72,21 @@ finding. Please add your findings to the table at the end (or open an issue).
 | 12 | The eval found three injection framings the regex missed | medium | Patterns added; held-out set added |
 | 13 | The docs index embedded in one 256-item batch: a 1.49 GB peak, fatal in a 2 GB container | high | Batches of 16 (444 MB peak) |
 | 14 | Tool calls were dropped by the gateway (Week 2 gap: no native tool calling) | medium | `tools`, `tool_choice`, `response_format` pass through, stream, assemble and key the cache |
+
+### Independent review, 2026-11-05 (a separate reviewing agent, high effort, every finding reproduced)
+
+| # | Finding | Severity | Fix |
+| --- | --- | --- | --- |
+| 15 | The output guard's number hold-back regex had nested quantifiers: "(1) (1) ... x" backtracked exponentially (25 s for 14 words), freezing the event loop for every tenant | critical | A linear backwards scan; regression test (60 words in under 0.2 s) |
+| 16 | A run with no whitespace was released at an arbitrary character, so a secret straddling the cut escaped | high | Cut only at characters a value cannot contain (quotes, commas, braces...); minified-JSON test at three chunk sizes |
+| 17 | `role: ["user"]` raised TypeError: a 500, and no request record | medium | Type-checked roles (400); any unexpected error is a recorded, traced 500 |
+| 18 | A WebSocket cancel before the first token skipped the bookkeeping, and an unstarted stream could leak its coalescing flight | high | Cancellation is recorded (499) and settled; `Prepared.abandon` frees the slot and the flight; test |
+| 19 | The production image accepted the repo's public demo keys | high | Production ignores plaintext keys (only `sha256:`); CI checks the demo key is refused |
+| 20 | Llama Guard never saw system, developer or tool messages | high | They are folded into the classified turns; test |
+| 21 | `max_completion_tokens` was neither capped nor forwarded; a backend without a default had no cap | medium | Treated as `max_tokens`; every request carries a cap |
+| 22 | A YAML typo made `/readyz` fail on every replica although the last good config kept serving | medium | Reported, not failed; test |
+| 23 | The Playground's WebSocket promise never settled if the server closed without a final frame | low | `onclose` settles it |
+| 24 | In dev, any website open in the same browser could drive the loopback-trusted control plane | medium | A foreign `Origin` is never the local operator; test |
 
 ### Peer audit (to be filled in by the reviewer)
 

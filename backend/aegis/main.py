@@ -107,10 +107,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         state = build_state(settings)
         cfg = state.config.get()
         plaintext = security.plaintext_keys(cfg)
-        if plaintext and not settings.is_dev:
-            log.warning(
-                "plaintext API keys in the gateway YAML; store them as sha256: entries",
-                extra={"key_ids": plaintext},
+        if plaintext and not security.plaintext_allowed(settings):
+            log.error(
+                "plaintext API keys in the gateway YAML are ignored in production; store them "
+                "as sha256: entries (or set AEGIS_ALLOW_PLAINTEXT_KEYS=1 for a local demo)",
+                extra={"ignored_key_ids": plaintext},
             )
         # ledgers from before key ids hold raw keys: replace them with the public ids
         state.ledger.remap_key_ids(
@@ -229,7 +230,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             and n in state.router.runtimes
             and state.router.runtimes[n].breaker.current_state() != "open"
         ]
-        ready = bool(usable) and state.config.last_error is None
+        # a bad hot-reload is reported but does not fail readiness: the last good config serves
+        ready = bool(usable)
         body = {
             "status": "ready" if ready else "not_ready",
             "usable_backends": usable,

@@ -21,9 +21,38 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
-MAX_HOLD = 160
-# whole words only: "+91 98" is held back, the "0" ending "pong0" is not
-_NUMERIC_TAIL = re.compile(r"(?:(?<=\s)|^)(?:[+(]?[\d().-]+\)?[ \t]+)+$")
+# The longest structured value we redact is a fine-grained GitHub token (~93 chars); a run of
+# text with no break longer than this is released (a 256-char token is not one of our values).
+MAX_HOLD = 256
+# Characters that can never be inside an email, phone, card or secret: a value always ends at
+# one, so text up to the last of them can be released safely (minified JSON, URLs, CSV).
+_BREAKS = frozenset(" \t\n\"'`,;{}[]<>|=&?")
+_NUMERIC_CHARS = frozenset("+()-.0123456789")
+
+
+def _numeric_word(word: str) -> bool:
+    """A word that could be part of a phone or card number ("+91", "98765", "(415)")."""
+    return any(c.isdigit() for c in word) and all(c in _NUMERIC_CHARS for c in word)
+
+
+def _numeric_tail_start(ready: str) -> int | None:
+    """Where the trailing run of number-like words begins, if any. A plain backwards scan:
+    linear in the length, so no input can make it slow (a nested-quantifier regex here once
+    backtracked exponentially on "(1) (1) (1) ...")."""
+    pos, start = len(ready), None
+    while pos > 0:
+        gap_end = pos
+        while pos > 0 and ready[pos - 1] in " \t":
+            pos -= 1
+        if pos == gap_end:
+            break  # a word must be followed by a space or a tab
+        word_end = pos
+        while pos > 0 and not ready[pos - 1].isspace():
+            pos -= 1
+        if not _numeric_word(ready[pos:word_end]):
+            break
+        start = pos
+    return start
 
 
 def _luhn(number: str) -> bool:
@@ -98,7 +127,9 @@ class StreamRedactor:
         if not text:
             return ""
         buf = self._held + text
-        cut = max(buf.rfind(" "), buf.rfind("\n"), buf.rfind("\t"))
+        cut = len(buf) - 1
+        while cut >= 0 and buf[cut] not in _BREAKS:
+            cut -= 1
         if cut < 0 and len(buf) <= MAX_HOLD:
             self._held = buf
             return ""
@@ -108,9 +139,9 @@ class StreamRedactor:
             ready, self._held = buf[: cut + 1], buf[cut + 1 :]
             # a phone or card number spans words ("+91 98765 43210"): keep trailing number-like
             # words back too, until a word that cannot be part of a number arrives
-            numeric = _NUMERIC_TAIL.search(ready)
-            if numeric and len(self._held) + len(ready) - numeric.start() <= MAX_HOLD:
-                ready, self._held = ready[: numeric.start()], ready[numeric.start() :] + self._held
+            start = _numeric_tail_start(ready)
+            if start is not None and len(self._held) + len(ready) - start <= MAX_HOLD:
+                ready, self._held = ready[:start], ready[start:] + self._held
         return redact_text(ready, self.counts)
 
     def flush(self) -> str:

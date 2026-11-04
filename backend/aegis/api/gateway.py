@@ -11,6 +11,7 @@ from typing import Any
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.background import BackgroundTask
 
 from aegis import security
 from aegis.pipeline import Pipeline, Prepared
@@ -164,6 +165,8 @@ async def chat_completions(request: Request) -> Any:
             prepared.status,
             headers=headers,
             media_type="text/event-stream",
+            # runs after the response, also after a disconnect: settles a stream never started
+            background=BackgroundTask(prepared.abandon) if prepared.abandon else None,
         )
     return JSONResponse(await _collect(prepared), prepared.status, headers=prepared.headers)
 
@@ -216,16 +219,21 @@ async def ws_chat(ws: WebSocket) -> None:
         if prepared.body is not None:
             await send({"type": "error", "id": rid, "status": prepared.status, **prepared.body})
             return
-        await send({"type": "start", "id": rid, "headers": prepared.headers})
-        assert prepared.events is not None
-        async for kind, payload in prepared.events:
-            if kind == "chunk":
-                await send({"type": "chunk", "id": rid, "data": payload})
-            elif kind == "error":
-                await send({"type": "error", "id": rid, "status": 200, **payload})
-            elif kind == "summary":
-                await send({"type": "summary", "id": rid, "data": payload})
-        await send({"type": "done", "id": rid})
+        try:
+            await send({"type": "start", "id": rid, "headers": prepared.headers})
+            assert prepared.events is not None
+            async for kind, payload in prepared.events:
+                if kind == "chunk":
+                    await send({"type": "chunk", "id": rid, "data": payload})
+                elif kind == "error":
+                    await send({"type": "error", "id": rid, "status": 200, **payload})
+                elif kind == "summary":
+                    await send({"type": "summary", "id": rid, "data": payload})
+            await send({"type": "done", "id": rid})
+        finally:
+            # cancelled between `start` and the first chunk: free the slot and the flight
+            if prepared.abandon is not None:
+                await asyncio.shield(prepared.abandon())
 
     limit = ws.app.state.state.config.get().limits.max_body_bytes
     try:

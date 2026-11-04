@@ -41,7 +41,7 @@ phrasing ("forget everything you were told before").
 
 | Suite | Result |
 | --- | --- |
-| Backend: unit, HTTP integration against fake model servers and real Redis, SIGSTOP, eval gate | 138 passed, 90% line coverage (CI floor 85%) |
+| Backend: unit, HTTP integration against fake model servers and real Redis, SIGSTOP, eval gate | 148 passed, 90% line coverage (CI floor 85%) |
 | Frontend unit (vitest) | 7 passed |
 | End to end on the real system (Playwright) | 21 passed |
 | Page sweep: 10 routes x 4 widths (console errors, failed requests, overflow, a11y basics) | 40 of 40 clean |

@@ -236,6 +236,8 @@ async def gateway(
     settings = Settings(
         env=overrides.pop("env", "dev"),  # the suite acts as the local operator unless a test says
         admin_key=overrides.pop("admin_key", None),
+        # the test keys are plaintext; production's refusal of them has its own test
+        allow_plaintext_keys=overrides.pop("allow_plaintext_keys", True),
         config_path=write_config(tmp_path, ports, **overrides),
         redis_url=REDIS_URL,
         redis_prefix=f"aegistest-{uuid.uuid4().hex[:8]}",

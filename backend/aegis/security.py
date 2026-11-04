@@ -43,16 +43,24 @@ def digest(key: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()
 
 
-def resolve_key(cfg: GatewayConfig, presented: str | None) -> KeyConfig | None:
-    """Constant-time lookup across every key; None when nothing matches."""
+def plaintext_allowed(settings: Settings) -> bool:
+    return settings.is_dev or settings.allow_plaintext_keys
+
+
+def resolve_key(
+    cfg: GatewayConfig, presented: str | None, allow_plaintext: bool = True
+) -> KeyConfig | None:
+    """Constant-time lookup across every key; None when nothing matches. With
+    `allow_plaintext=False` (production) only `sha256:` entries can match."""
     if not presented:
         return None
     want = digest(presented)
     match: KeyConfig | None = None
     for entry, key_cfg in cfg.keys.items():
-        stored = (
-            entry[len(HASH_PREFIX) :].lower() if entry.startswith(HASH_PREFIX) else digest(entry)
-        )
+        hashed = entry.startswith(HASH_PREFIX)
+        if not hashed and not allow_plaintext:
+            continue
+        stored = entry[len(HASH_PREFIX) :].lower() if hashed else digest(entry)
         if hmac.compare_digest(stored, want) and match is None:
             match = key_cfg
     return match
@@ -98,19 +106,38 @@ def _is_loopback(host: str | None) -> bool:
 
 
 def principal_for(
-    settings: Settings, cfg: GatewayConfig, presented: str | None, client_host: str | None
+    settings: Settings,
+    cfg: GatewayConfig,
+    presented: str | None,
+    client_host: str | None,
+    origin: str | None = None,
 ) -> Principal | None:
     admin = settings.admin_key.get_secret_value() if settings.admin_key else None
     if presented and admin and hmac.compare_digest(digest(presented), digest(admin)):
         return Principal("admin", None, ADMIN_ENV_KEY_ID)
-    key_cfg = resolve_key(cfg, presented)
+    key_cfg = resolve_key(cfg, presented, plaintext_allowed(settings))
     if key_cfg is not None:
         if key_cfg.role == "admin":
             return Principal("admin", key_cfg.tenant, key_cfg.id)
         return Principal("tenant", key_cfg.tenant, key_cfg.id)
-    if presented is None and settings.is_dev and _is_loopback(client_host):
+    if (
+        presented is None
+        and settings.is_dev
+        and _is_loopback(client_host)
+        and _trusted_origin(settings, origin)
+    ):
         return Principal("local_operator", None, "local")
     return None
+
+
+def _trusted_origin(settings: Settings, origin: str | None) -> bool:
+    """A browser names the page that made a request. In dev, loopback means "the operator" only
+    for the AEGIS site itself (or a non-browser client, which sends no Origin), so another
+    website open in the same browser cannot drive the gateway (no CSRF, no WebSocket hijack)."""
+    if not origin:
+        return True
+    own = {settings.self_url.rstrip("/"), "http://127.0.0.1:8000", "http://localhost:8000"}
+    return origin.rstrip("/") in own | {o.rstrip("/") for o in settings.cors_origins}
 
 
 def _resolve(request: Request | WebSocket) -> Principal | None:
@@ -120,7 +147,8 @@ def _resolve(request: Request | WebSocket) -> Principal | None:
         # browsers cannot set headers on a WebSocket; the key may come as a query parameter
         presented = request.query_params.get("key") or None
     host = request.client.host if request.client else None
-    return principal_for(state.settings, state.config.get(), presented, host)
+    origin = request.headers.get("origin")
+    return principal_for(state.settings, state.config.get(), presented, host, origin)
 
 
 def require_viewer(request: Request) -> Principal:

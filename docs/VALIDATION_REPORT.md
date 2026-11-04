@@ -14,7 +14,7 @@ mobile (target 85), and every scenario runs at 60 fps or more. Known limits:
 
 | Suite | Command | Result |
 | --- | --- | --- |
-| Backend unit + HTTP integration + SIGSTOP + eval gate | `make test-backend` | **138 passed**, 90% line coverage |
+| Backend unit + HTTP integration + SIGSTOP + eval gate | `make test-backend` | **148 passed**, 90% line coverage |
 | Evaluation gate (five golden sets, Llama Guard included) | `make evals-live` | **5 of 5 PASS** |
 | Lint and format (backend) | `uv run ruff check .`, `ruff format --check .` | **pass** |
 | Types (backend) | `uv run mypy` | **pass** (no issues in 43 files) |

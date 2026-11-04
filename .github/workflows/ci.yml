@@ -67,6 +67,8 @@ jobs:
           curl -fs http://127.0.0.1:8000/healthz | grep -q alive
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/readyz)" = 503   # no models here
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/architecture)" = 401
+          # the repo's demo keys are public: production must not accept them
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'authorization: Bearer aegis-demo-key' -H 'content-type: application/json' -d '{"messages":[{"role":"user","content":"hi"}]}' http://127.0.0.1:8000/v1/chat/completions)" = 401
           test "$(docker exec aegis id -u)" = 10001                                               # not root
           docker logs aegis 2>&1 | head -5 | grep -q '"level"'                                    # JSON logs
       - if: always()

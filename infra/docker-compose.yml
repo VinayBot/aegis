@@ -30,7 +30,9 @@ services:
     ports: ["127.0.0.1:8001:8000"]
     environment:
       AEGIS_ENV: production
-      AEGIS_ADMIN_KEY: ${AEGIS_ADMIN_KEY:-}   # set it to use the control plane; empty = data plane only
+      AEGIS_ADMIN_KEY: ${AEGIS_ADMIN_KEY:-}   # set it to use the control plane
+      # production ignores the YAML's plaintext demo keys; 1 accepts them for a local demo
+      AEGIS_ALLOW_PLAINTEXT_KEYS: ${AEGIS_ALLOW_PLAINTEXT_KEYS:-0}
       AEGIS_REDIS_URL: redis://redis:6379/0
       AEGIS_OTLP_ENDPOINT: http://jaeger:4318
       AEGIS_JAEGER_QUERY_URL: http://jaeger:16686

@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     env: Literal["dev", "production"] = "production"
     # Admin credential from the environment (a secret store in production), never from the YAML.
     admin_key: SecretStr | None = None
+    # Production ignores plaintext keys in the YAML (they are readable by anyone who can read the
+    # file, and the repo's demo keys are public): only `sha256:` entries authenticate. Set this
+    # to accept plaintext keys anyway, e.g. for a local container demo.
+    allow_plaintext_keys: bool = False
     log_format: Literal["json", "text"] = "json"
     log_level: str = "INFO"
     config_path: Path = BACKEND_DIR / "config" / "gateway.yaml"
