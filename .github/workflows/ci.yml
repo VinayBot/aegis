@@ -21,7 +21,7 @@ jobs:
       FASTEMBED_CACHE_PATH: /home/runner/.cache/fastembed
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
       - uses: actions/cache@v4
         with: { path: /home/runner/.cache/fastembed, key: fastembed-bge-small-en-v1.5 }
       - run: uv sync --frozen
