@@ -1,15 +1,15 @@
 # The gateway YAML, mounted at /app/backend/config. Model servers are other services in the
-# cluster (or outside it); `${AEGIS_MODEL_HOST}` in the YAML resolves to MODEL_HOST below.
+# cluster (or outside it); `${PRAHARI_MODEL_HOST}` in the YAML resolves to MODEL_HOST below.
 # Keys here must be `sha256:` entries: production ignores plaintext keys.
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: aegis-config
-  namespace: aegis
+  name: prahari-config
+  namespace: prahari
 data:
-  AEGIS_ENV: production
-  AEGIS_LOG_FORMAT: json
-  AEGIS_REDIS_URL: redis://redis.aegis.svc:6379/0
-  AEGIS_OTLP_ENDPOINT: http://otel-collector.observability.svc:4318
-  AEGIS_SELF_URL: http://127.0.0.1:8000
-  AEGIS_MODEL_HOST: models.aegis.svc
+  PRAHARI_ENV: production
+  PRAHARI_LOG_FORMAT: json
+  PRAHARI_REDIS_URL: redis://redis.prahari.svc:6379/0
+  PRAHARI_OTLP_ENDPOINT: http://otel-collector.observability.svc:4318
+  PRAHARI_SELF_URL: http://127.0.0.1:8000
+  PRAHARI_MODEL_HOST: models.prahari.svc

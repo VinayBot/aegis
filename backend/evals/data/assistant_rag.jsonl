@@ -5,7 +5,7 @@
 {"q": "What happens to rate limits when Redis is down?", "facts": ["in-process"], "sources": ["config/gateway.yaml", "docs/ARCHITECTURE.md"]}
 {"q": "Which embedding model does the semantic cache use?", "facts": ["bge-small"], "sources": ["README.md", "docs/ARCHITECTURE.md", "docs/DECISIONS.md"]}
 {"q": "Why does the core path use raw httpx instead of LiteLLM?", "facts": ["failover"], "sources": ["docs/DECISIONS.md"]}
-{"q": "What probability of unsafe does Llama Guard need before AEGIS blocks a prompt?", "facts": ["0.9"], "sources": ["docs/DECISIONS.md", "README.md", "config/gateway.yaml", "docs/ARCHITECTURE.md"]}
+{"q": "What probability of unsafe does Llama Guard need before PRAHARI blocks a prompt?", "facts": ["0.9"], "sources": ["docs/DECISIONS.md", "README.md", "config/gateway.yaml", "docs/ARCHITECTURE.md"]}
 {"q": "What does the coalescer do?", "facts": ["identical|same"], "sources": ["README.md", "docs/ARCHITECTURE.md"]}
 {"q": "What does a backend dying mid-stream send to the client?", "facts": ["error"], "sources": ["README.md", "docs/ARCHITECTURE.md", "docs/DECISIONS.md", "config/gateway.yaml"]}
 {"q": "Who painted the Mona Lisa?", "abstain": true}

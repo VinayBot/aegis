@@ -31,4 +31,4 @@ Fixes
 
 OpenAI-compatible SSE gateway with exact and semantic caching, coalescing, hedging, failover,
 circuit breakers, rate limits, budgets, PII redaction, OpenTelemetry traces, the live website,
-the Chaos Lab and the AEGIS assistant.
+the Chaos Lab and the PRAHARI assistant.

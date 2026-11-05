@@ -1,5 +1,5 @@
 // The Chaos Lab: break the real gateway on purpose and watch it cope. Every control calls
-// POST /api/chaos (dev-only, gated by AEGIS_CHAOS_ENABLED); every action is logged, reversible and
+// POST /api/chaos (dev-only, gated by PRAHARI_CHAOS_ENABLED); every action is logged, reversible and
 // reverts by itself. Guided scenarios run server-side and narrate themselves as events.
 import { BlurWords } from "../components/fx";
 import { AnimatePresence, motion } from "motion/react";
@@ -166,7 +166,7 @@ export default function ChaosLab() {
       <h1 className="font-display text-4xl font-semibold tracking-tight md:text-6xl"><BlurWords text="Chaos Lab" shimmer /></h1>
       <p className="mt-2 max-w-[72ch] text-ink-soft">Freeze a model, slow it down or make it fail, and watch hedging, failover and the circuit breakers respond. Every action is real, logged, reversible, and reverts by itself after {chaos?.auto_revert_seconds ?? 120} s.</p>
       {mode !== "live" && <p className="glass mt-4 p-4 text-amber">The Chaos Lab needs the live gateway. In replay mode the controls are off.</p>}
-      {mode === "live" && chaos && !chaos.enabled && <p className="glass mt-4 p-4 text-amber">Chaos is disabled on this gateway. Start it with <code>AEGIS_CHAOS_ENABLED=1</code> (make dev does this).</p>}
+      {mode === "live" && chaos && !chaos.enabled && <p className="glass mt-4 p-4 text-amber">Chaos is disabled on this gateway. Start it with <code>PRAHARI_CHAOS_ENABLED=1</code> (make dev does this).</p>}
       {error && <p role="alert" className="glass mt-4 p-4 text-red">{error}</p>}
 
       <div className="mt-8 grid gap-4 xl:grid-cols-[1.15fr_1fr]">

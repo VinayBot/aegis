@@ -44,7 +44,7 @@ ORB_CROP = (355, 70, 915, 630)
 BOT_CROP = (300, 78, 990, 900)
 BOT_FADE_PX = 110
 
-# The "Meet AEGIS" robot (images/*1.20.15*), measured on its 568x1018 source.
+# The "Meet PRAHARI" robot (images/*1.20.15*), measured on its 568x1018 source.
 MEET_CROP = (29, 94, 543, 937)
 MEET_EYES = {"left": (190.5, 402, 40, 172.5, 396), "right": (381, 402, 40, 398.5, 396)}  # ring cx, cy, r, pupil x, y
 

@@ -11,7 +11,7 @@ TRACEPARENT = f"00-{TRACE_ID}-00f067aa0ba902b7-01"
 async def test_a_callers_traceparent_continues_into_the_gateway(gateway: Gateway) -> None:
     """NEXUS (or any app) sends its W3C trace context: the gateway's spans join that trace."""
     r = await gateway.chat("traced across services", headers={"traceparent": TRACEPARENT})
-    assert r.status_code == 200 and r.headers["x-aegis-trace-id"] == TRACE_ID
+    assert r.status_code == 200 and r.headers["x-prahari-trace-id"] == TRACE_ID
     spans = [s for s in gateway.spans.get_finished_spans() if s.name == "POST /v1/chat/completions"]
     root = spans[-1]
     assert format(root.context.trace_id, "032x") == TRACE_ID
@@ -19,8 +19,8 @@ async def test_a_callers_traceparent_continues_into_the_gateway(gateway: Gateway
 
 
 async def test_without_a_traceparent_each_request_starts_its_own_trace(gateway: Gateway) -> None:
-    a = (await gateway.chat("own trace a")).headers["x-aegis-trace-id"]
-    b = (await gateway.chat("own trace b")).headers["x-aegis-trace-id"]
+    a = (await gateway.chat("own trace a")).headers["x-prahari-trace-id"]
+    b = (await gateway.chat("own trace b")).headers["x-prahari-trace-id"]
     assert a != b and TRACE_ID not in (a, b)
 
 

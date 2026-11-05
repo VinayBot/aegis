@@ -1,5 +1,5 @@
 // The Architecture page's 3D view: the gateway as a small galaxy.
-//   core     the AEGIS gateway itself, a glowing star with orbit rings
+//   core     the PRAHARI gateway itself, a glowing star with orbit rings
 //   planets  the six phases every request passes through, in order round the core
 //   moons    each model backend circles "Think", coloured by its health and breaker
 //   comets   every real request is a comet that flies planet to planet as its events arrive:
@@ -297,7 +297,7 @@ export default function Galaxy3D({ nodes, still }: { nodes: ArchNode[]; still?: 
       </EffectComposer>
     </Canvas>
     <div className="pointer-events-none absolute inset-0 overflow-hidden">
-      <span ref={label("core")} className="galaxy-label galaxy-core galaxy-pin">AEGIS gateway</span>
+      <span ref={label("core")} className="galaxy-label galaxy-core galaxy-pin">PRAHARI gateway</span>
       {JOURNEY.map((j, i) => (
         <span key={j.group} ref={label(`p${i}`)} className="galaxy-label galaxy-pin" title={j.explains}><b>{j.title}</b></span>
       ))}

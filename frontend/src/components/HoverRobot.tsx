@@ -1,4 +1,4 @@
-// The hovering AEGIS robot: cut-out picture, living LED face, a live chart on its glass tablet,
+// The hovering PRAHARI robot: cut-out picture, living LED face, a live chart on its glass tablet,
 // an idle bob with a floor shadow that breathes with it, and a spring-smoothed tilt toward the
 // pointer. With reduced motion it stands still and the face holds its expression.
 import { animate, motion, useMotionValue, useSpring, useTransform } from "motion/react";
@@ -109,7 +109,7 @@ export default function HoverRobot({
             sizes={sizes}
             width={HOVER.width}
             height={HOVER.height}
-            alt="AEGIS, a round white robot with a glowing LED face, holding a glass tablet that shows the gateway's live request rate"
+            alt="PRAHARI, a round white robot with a glowing LED face, holding a glass tablet that shows the gateway's live request rate"
             className="block h-auto w-full"
             fetchPriority={priority ? "high" : "auto"}
             loading={priority ? "eager" : "lazy"}

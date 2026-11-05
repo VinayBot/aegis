@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator
 import pytest
 import websockets
 
-from aegis.config import SafetyConfig
+from prahari.config import SafetyConfig
 from tests.conftest import Gateway, free_port, serve, sse_summary, stop
 from tests.fake_backend import FakeControl, GuardControl, build_guard_app
 
@@ -143,7 +143,7 @@ def ws_url(gateway: Gateway, key: str = "k-demo") -> str:
 
 async def test_websocket_chat_streams_the_same_pipeline(gateway: Gateway) -> None:
     async with websockets.connect(ws_url(gateway)) as ws:
-        body = {"model": "aegis-chat", "messages": [{"role": "user", "content": "ws hello"}]}
+        body = {"model": "prahari-chat", "messages": [{"role": "user", "content": "ws hello"}]}
         await ws.send(json.dumps({"type": "chat", "id": "c1", "body": body}))
         kinds, text = [], ""
         while True:
@@ -165,7 +165,7 @@ async def test_websocket_cancel_stops_the_model(
 ) -> None:
     fakes["primary"].tokens, fakes["primary"].token_delay = 40, 0.1
     async with websockets.connect(ws_url(gateway)) as ws:
-        body = {"model": "aegis-chat", "messages": [{"role": "user", "content": "long answer"}]}
+        body = {"model": "prahari-chat", "messages": [{"role": "user", "content": "long answer"}]}
         await ws.send(json.dumps({"type": "chat", "id": "c1", "body": body}))
         while json.loads(await ws.recv())["type"] != "chunk":
             pass
@@ -179,7 +179,7 @@ async def test_websocket_cancel_stops_the_model(
 
 async def test_websocket_chat_rejects_a_bad_key(gateway: Gateway) -> None:
     async with websockets.connect(ws_url(gateway, key="nope")) as ws:
-        body = {"model": "aegis-chat", "messages": [{"role": "user", "content": "hi"}]}
+        body = {"model": "prahari-chat", "messages": [{"role": "user", "content": "hi"}]}
         await ws.send(json.dumps({"type": "chat", "id": "c1", "body": body}))
         msg = json.loads(await ws.recv())
         assert msg["type"] == "error" and msg["status"] == 401

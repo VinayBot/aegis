@@ -75,9 +75,9 @@ export default function Shell() {
       <ReplayBanner />
       <header className="sticky top-0 z-30" style={{ background: "var(--scrim)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
         <nav aria-label="Main" className="mx-auto flex h-16 max-w-[1440px] items-center gap-6 px-[var(--gutter)]">
-          <NavLink to="/" className="flex items-center gap-2.5 font-display text-xl font-bold tracking-tight text-ink" aria-label="AEGIS home">
+          <NavLink to="/" className="flex items-center gap-2.5 font-display text-xl font-bold tracking-tight text-ink" aria-label="PRAHARI home">
             <img src="/assets/robot-orb-96.webp" alt="" width={28} height={28} className="h-7 w-7 rounded-full" />
-            AEGIS
+            PRAHARI
           </NavLink>
           <ul className="ml-2 hidden items-center gap-1 lg:flex">
             {LINKS.slice(1).map(([to, label]) => (

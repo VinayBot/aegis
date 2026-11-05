@@ -19,13 +19,13 @@ Request headers:
 | Header | Effect |
 | --- | --- |
 | `Cache-Control: no-cache` | skip the cache lookup (the fresh answer is still written) |
-| `x-aegis-summary: 1` | append an `event: aegis` SSE frame with the request summary before `[DONE]` |
-| `x-aegis-client: <name>` | label the caller in traces and the ledger |
+| `x-prahari-summary: 1` | append an `event: prahari` SSE frame with the request summary before `[DONE]` |
+| `x-prahari-client: <name>` | label the caller in traces and the ledger |
 
 Response headers: `x-cache` (`miss`, `hit`, `semantic`, `coalesced`, `bypass`),
-`x-aegis-backend`, `x-aegis-request-id`, `x-aegis-trace-id`, `x-aegis-hedged`,
-`x-aegis-failovers`, `x-aegis-similarity` (semantic hits), `x-aegis-coalesced-with`,
-`x-aegis-budget-warning` (over the soft budget), `x-aegis-cost-label: est. cloud equivalent`,
+`x-prahari-backend`, `x-prahari-request-id`, `x-prahari-trace-id`, `x-prahari-hedged`,
+`x-prahari-failovers`, `x-prahari-similarity` (semantic hits), `x-prahari-coalesced-with`,
+`x-prahari-budget-warning` (over the soft budget), `x-prahari-cost-label: est. cloud equivalent`,
 and `Retry-After` on 429 and 503.
 
 Streaming responses are standard OpenAI `chat.completion.chunk` SSE frames ending in
@@ -63,13 +63,13 @@ event (`request.start`, `stage.enter`, `stage.exit`, `cache.hit`, `cache.miss`,
 `backend.first_token`, `request.end`, `breaker.state`, `ratelimit.reject`, `budget.warn`,
 `guardrail.redact`, `chaos.action`, `scenario.step`, `health`), and a heartbeat every 3 s.
 
-Chaos endpoints answer 403 unless the gateway runs with `AEGIS_ENV=dev` and
-`AEGIS_CHAOS_ENABLED=1`; production refuses chaos even when the flag is set.
+Chaos endpoints answer 403 unless the gateway runs with `PRAHARI_ENV=dev` and
+`PRAHARI_CHAOS_ENABLED=1`; production refuses chaos even when the flag is set.
 
 ## Access levels
 
 In production (the default), every `/api/*` route except the public ones needs a key; admin
-routes need an admin key (YAML `role: admin`, or `AEGIS_ADMIN_KEY`). In dev, a caller on the
+routes need an admin key (YAML `role: admin`, or `PRAHARI_ADMIN_KEY`). In dev, a caller on the
 loopback interface is the local operator (admin). See docs/ARCHITECTURE.md, Security model.
 
 | Level | Routes |
@@ -110,8 +110,8 @@ loopback interface is the local operator (admin). See docs/ARCHITECTURE.md, Secu
 | `GET /api/traces/{trace_id}` | One trace as a waterfall |
 | `GET /api/docs` | Project documents |
 | `GET /api/docs/{slug}` | One project document (markdown) |
-| `POST /api/assistant/chat` | Ask AEGIS about the project (SSE); routed through the gateway |
-| `POST /v1/auth/token` | Exchange an API key for a short-lived JWT (HS256; `ttl_seconds` 60-86400, default 900); 501 when `AEGIS_JWT_SECRET` is unset |
+| `POST /api/assistant/chat` | Ask PRAHARI about the project (SSE); routed through the gateway |
+| `POST /v1/auth/token` | Exchange an API key for a short-lived JWT (HS256; `ttl_seconds` 60-86400, default 900); 501 when `PRAHARI_JWT_SECRET` is unset |
 | `POST /v1/feedback` | Rate an answer: `{"request_id", "rating": "up"|"down", "comment"?}`; tenant-scoped; stored, metered, and a Langfuse `user-feedback` score on the trace |
 | `GET /healthz` | Liveness: the process and its event loop respond |
 | `GET /readyz` | Readiness: config loaded and at least one backend can serve (503 otherwise) |

@@ -19,7 +19,7 @@ three changes listed under "Known gaps".
 | Resilience: explicit timeouts, backoff with jitter, multi-provider fallback | met | httpx timeouts on every call (connect 2 s, read 60 s; probes 0.4 s; Llama Guard 2.5 s); first-token timeout 15 s + 1 s/1k tokens; chain retry with full-jitter backoff; fallback chains across MLX, Ollama, vLLM and the LiteLLM proxy; hedging; circuit breakers on consecutive errors and on a 50% failure rate over 30 s, healing without traffic. |
 | Performance: semantic cache, SSE streaming, query plans | met | Exact and semantic caches in Redis Stack (HNSW); SSE and WebSocket streaming from async generators; `EXPLAIN QUERY PLAN` checked in tests (`test_tenant_queries_use_an_index`). Load test below. |
 | Hardened deployment: multi-stage non-root image, probes, JSON logs | met | `Dockerfile`: three stages, pinned bases, uid 10001, HEALTHCHECK; compose adds a read-only root, no capabilities, no-new-privileges. `/healthz` (liveness) and `/readyz` (readiness: 503 when no backend can serve). JSON logs with request id, trace id and tenant. Kubernetes manifests (`deploy/k8s`): the `restricted` pod security level, startup, liveness and readiness probes, resource limits from measurements, a default-deny network policy, secrets from a Secret; rendered and schema-checked in CI (`make k8s`). CI also builds the image, smoke-tests it, and publishes its SBOM and a Trivy report. |
-| Telemetry: Langfuse tracing + Prometheus /metrics | met | OTLP to Jaeger always and to Langfuse with keys; verified on self-hosted Langfuse 4.67.0 (docs/evidence/langfuse-*.png). User ratings (`POST /v1/feedback`) become Langfuse scores on the trace and `aegis_feedback_total`. `GET /metrics` in Prometheus format. |
+| Telemetry: Langfuse tracing + Prometheus /metrics | met | OTLP to Jaeger always and to Langfuse with keys; verified on self-hosted Langfuse 4.67.0 (docs/evidence/langfuse-*.png). User ratings (`POST /v1/feedback`) become Langfuse scores on the trace and `prahari_feedback_total`. `GET /metrics` in Prometheus format. |
 
 ## Evaluation gate
 
@@ -32,7 +32,7 @@ three changes listed under "Known gaps".
 | Prompt injection | 31 (7 held out) | recall >= 0.85, FP rate <= 0.1 | recall 0.944, FP 0.0 |
 | Output redaction | 16 | recall 1.0, FP 0.0 | 1.0, 0.0 |
 | Llama Guard 3 1B at P(unsafe) >= 0.9 | 18 | recall >= 0.85, FP rate <= 0.1 | 1.0, 0.0 |
-| AEGIS assistant, a RAG system over these docs (live) | 13 | retrieval >= 0.9, answer accuracy >= 0.9, abstention 1.0 | 1.0, 1.0, 1.0 |
+| PRAHARI assistant, a RAG system over these docs (live) | 13 | retrieval >= 0.9, answer accuracy >= 0.9, abstention 1.0 | 1.0, 1.0, 1.0 |
 
 The cache threshold sits in a measured gap: the least similar true paraphrase scores 0.967, the
 most similar different question ("orders from last week" vs "last month") 0.940. The two misses
@@ -82,10 +82,10 @@ backend has 4 slots (it had 1, from an older mlx-lm that served one request at a
 
 | SLI | Target | How it is measured |
 | --- | --- | --- |
-| Availability of the data plane | 99.5% of requests not 5xx, per day | `aegis_requests_total` by status |
-| Cache-hit latency | p95 under 300 ms | `aegis_request_duration_seconds{cache="exact"}` |
-| Time to first token on a miss | p95 under 3 s | `aegis_time_to_first_token_seconds` |
-| Breaker recovery | a healed backend closes within open_seconds + 1 probe | `aegis_breaker_transitions_total` |
+| Availability of the data plane | 99.5% of requests not 5xx, per day | `prahari_requests_total` by status |
+| Cache-hit latency | p95 under 300 ms | `prahari_request_duration_seconds{cache="exact"}` |
+| Time to first token on a miss | p95 under 3 s | `prahari_time_to_first_token_seconds` |
+| Breaker recovery | a healed backend closes within open_seconds + 1 probe | `prahari_breaker_transitions_total` |
 
 ## Alerts
 
@@ -93,22 +93,22 @@ backend has 4 slots (it had 1, from an older mlx-lm that served one request at a
 
 | Alert | Fires when | Severity |
 | --- | --- | --- |
-| AegisErrorBudgetFastBurn | error ratio over 14.4 x 0.5% on both 1 h and 5 min windows (two days' budget in an hour) | page |
-| AegisErrorBudgetSlowBurn | over 6 x 0.5% on 6 h and 30 min windows | ticket |
-| AegisNoBackendAvailable | every breaker open for 1 min | page |
-| AegisBreakerOpen | one breaker open for 2 min | ticket |
-| AegisTimeToFirstTokenSlow / AegisCacheHitLatencyHigh | the latency SLOs above are missed for 10 min | ticket |
-| AegisRateLimitPressure, AegisSafetyBlockSpike, AegisAnswersRatedDown | rate-limit pressure, unusual Llama Guard blocking, over 30% thumbs-down | info / ticket |
+| PrahariErrorBudgetFastBurn | error ratio over 14.4 x 0.5% on both 1 h and 5 min windows (two days' budget in an hour) | page |
+| PrahariErrorBudgetSlowBurn | over 6 x 0.5% on 6 h and 30 min windows | ticket |
+| PrahariNoBackendAvailable | every breaker open for 1 min | page |
+| PrahariBreakerOpen | one breaker open for 2 min | ticket |
+| PrahariTimeToFirstTokenSlow / PrahariCacheHitLatencyHigh | the latency SLOs above are missed for 10 min | ticket |
+| PrahariRateLimitPressure, PrahariSafetyBlockSpike, PrahariAnswersRatedDown | rate-limit pressure, unusual Llama Guard blocking, over 30% thumbs-down | info / ticket |
 
 ## Runbook
 
 | Symptom | Check | Action |
 | --- | --- | --- |
 | `/readyz` 503 | `/api/health`: which backends are down or open | Start or revive the model server; the breaker probes and closes by itself |
-| 503 `no_backend_available` bursts | `aegis_breaker_state`, slot gauges | All breakers open: fix the backends; all busy: add slots or a backend to the chain |
-| Many 429s | `aegis_rejections_total{reason="rate_limit"}` per tenant | Raise that key's `tpm` in the YAML (hot-reloaded) |
+| 503 `no_backend_available` bursts | `prahari_breaker_state`, slot gauges | All breakers open: fix the backends; all busy: add slots or a backend to the chain |
+| Many 429s | `prahari_rejections_total{reason="rate_limit"}` per tenant | Raise that key's `tpm` in the YAML (hot-reloaded) |
 | `safety.skipped` events | Ollama and `llama-guard3:1b` loaded? | `ollama pull llama-guard3:1b`; for strict tenants set `on_error: block` |
-| Cache hit rate falls | `aegis_requests_total{cache=...}` | Redis healthy? `redis_ok` in `/api/health`; the semantic threshold in `/api/config` |
+| Cache hit rate falls | `prahari_requests_total{cache=...}` | Redis healthy? `redis_ok` in `/api/health`; the semantic threshold in `/api/config` |
 | Wrong answers from the cache | the semantic eval and near-miss similarities | Raise `cache.semantic_threshold` (`POST /api/cache/tune`), flush, add the pair to `evals/data` |
 
 ## Known gaps

@@ -17,7 +17,7 @@ from tests.conftest import Gateway, free_port, serve, stop
 
 async def answer(gateway: Gateway, prompt: str, key: str = "k-demo") -> str:
     r = await gateway.chat(prompt, key=key)
-    return r.headers["x-aegis-request-id"]
+    return r.headers["x-prahari-request-id"]
 
 
 def auth(key: str) -> dict[str, str]:
@@ -37,7 +37,7 @@ async def test_a_tenant_rates_its_own_answer(gateway: Gateway) -> None:
     assert demo["feedback_up"] >= 1
     await asyncio.sleep(0.1)
     assert (
-        'aegis_feedback_total{backend="primary",model="aegis-chat",rating="up"}'
+        'prahari_feedback_total{backend="primary",model="prahari-chat",rating="up"}'
         in (await c.get("/metrics")).text
     )
     # changing your mind replaces the vote

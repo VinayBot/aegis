@@ -19,10 +19,10 @@ async def test_streams_openai_sse_and_records_summary(gateway: Gateway) -> None:
     r = await gateway.chat("hello", temperature=0)
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/event-stream")
-    assert r.headers["x-cache"] == "miss" and r.headers["x-aegis-backend"] == "primary"
+    assert r.headers["x-cache"] == "miss" and r.headers["x-prahari-backend"] == "primary"
     frames = [ln for ln in r.text.splitlines() if ln.startswith("data: {")]
     chunk = json.loads(frames[0][6:])
-    assert chunk["object"] == "chat.completion.chunk" and chunk["model"] == "aegis-chat"
+    assert chunk["object"] == "chat.completion.chunk" and chunk["model"] == "prahari-chat"
     assert r.text.rstrip().endswith("data: [DONE]")
     s = sse_summary(r.text)
     assert s["tokens_in"] == 7 and s["tokens_out"] == 5 and not s["usage_estimated"]
@@ -49,12 +49,12 @@ async def test_unsummarised_stream_is_pure_openai(gateway: Gateway) -> None:
         "/v1/chat/completions",
         headers={"authorization": "Bearer k-demo"},
         json={
-            "model": "aegis-chat",
+            "model": "prahari-chat",
             "stream": True,
             "messages": [{"role": "user", "content": "x"}],
         },
     )
-    assert "event: aegis" not in r.text
+    assert "event: prahari" not in r.text
 
 
 async def test_auth_rejects_unknown_key(gateway: Gateway) -> None:
@@ -145,7 +145,7 @@ async def test_semantic_cache_hits_a_paraphrase(
     await gateway.state.recorder.drain()
     r = await gateway.chat("how long does shipping take to canada", temperature=0)
     assert r.headers["x-cache"] == "semantic"
-    assert float(r.headers["x-aegis-similarity"]) >= 0.95
+    assert float(r.headers["x-prahari-similarity"]) >= 0.95
     assert fakes["primary"].calls == 1
 
 
@@ -181,7 +181,7 @@ async def test_coalescing_makes_exactly_one_upstream_call(
     caches = sorted(r.headers["x-cache"] for r in results)
     assert caches.count("coalesced") == 9
     texts = {
-        r.text.split("event: aegis")[0].replace(r.headers["x-aegis-request-id"], "")
+        r.text.split("event: prahari")[0].replace(r.headers["x-prahari-request-id"], "")
         for r in results
     }
     assert all("pong0" in t for t in texts)
@@ -192,7 +192,7 @@ async def test_duplicate_storm_coalesces_on_every_run(
 ) -> None:
     """Each storm's prompt is near-identical to the last, so a cached answer would hide the
     coalescer: every run must still make one upstream call and coalesce the other nine."""
-    from aegis import scenarios
+    from prahari import scenarios
 
     fakes["primary"].first_token_delay = 0.3
     for run in range(2):
@@ -207,7 +207,7 @@ async def test_duplicate_storm_coalesces_on_every_run(
 async def test_failover_on_upstream_5xx(gateway: Gateway, fakes: dict[str, FakeControl]) -> None:
     fakes["primary"].status = 503
     r = await gateway.chat("x")
-    assert r.status_code == 200 and r.headers["x-aegis-backend"] == "fallback"
+    assert r.status_code == 200 and r.headers["x-prahari-backend"] == "fallback"
     s = sse_summary(r.text)
     assert s["failovers"] == 1 and s["failover_detail"][0]["reason"] == "http_5xx"
 
@@ -215,7 +215,7 @@ async def test_failover_on_upstream_5xx(gateway: Gateway, fakes: dict[str, FakeC
 async def test_unknown_model_fails_over(gateway: Gateway, fakes: dict[str, FakeControl]) -> None:
     fakes["primary"].model = "renamed"
     r = await gateway.chat("x")
-    assert r.headers["x-aegis-backend"] == "fallback"
+    assert r.headers["x-prahari-backend"] == "fallback"
     assert sse_summary(r.text)["failover_detail"][0]["reason"] == "unknown_model"
 
 
@@ -229,7 +229,7 @@ async def test_three_errors_open_the_breaker_and_traffic_skips_it(
     assert breaker.current_state() == "open"
     calls = fakes["primary"].calls
     r = await gateway.chat("after", headers={"cache-control": "no-cache"})
-    assert r.headers["x-aegis-backend"] == "fallback"
+    assert r.headers["x-prahari-backend"] == "fallback"
     assert fakes["primary"].calls == calls  # skipped, not tried
 
 
@@ -238,7 +238,7 @@ async def test_hedge_fires_and_cancels_the_loser(
 ) -> None:
     fakes["primary"].first_token_delay = 1.2  # slower than hedge_default_ms (400)
     r = await gateway.chat("hedge me", headers={"cache-control": "no-cache"})
-    assert r.headers["x-aegis-backend"] == "fallback"
+    assert r.headers["x-prahari-backend"] == "fallback"
     s = sse_summary(r.text)
     assert s["hedged"] and s["hedge_won"]
     for _ in range(50):
@@ -268,7 +268,7 @@ async def test_busy_primary_spills_to_fallback_after_slot_wait(
     rs = await asyncio.gather(
         *(gateway.chat(f"distinct {i}", headers={"cache-control": "no-cache"}) for i in range(3))
     )
-    backends = sorted(r.headers["x-aegis-backend"] for r in rs)
+    backends = sorted(r.headers["x-prahari-backend"] for r in rs)
     assert backends.count("primary") == 1 and backends.count("fallback") == 2
     assert (
         gateway.state.router.runtimes["primary"].breaker.current_state() == "closed"
@@ -299,19 +299,21 @@ async def test_midstream_failure_sends_sse_error_and_does_not_cache(
 async def test_every_stage_is_a_span_with_genai_conventions(gateway: Gateway) -> None:
     SPANS = gateway.spans
     r = await gateway.chat("trace me", headers={"cache-control": "no-cache"})
-    rid = r.headers["x-aegis-request-id"]
+    rid = r.headers["x-prahari-request-id"]
     names = {s.name for s in SPANS.get_finished_spans()}
     for stage in ("auth", "guardrails", "ratelimit", "budget", "coalescer", "router", "relay"):
-        assert f"aegis.{stage}" in names
+        assert f"prahari.{stage}" in names
     genai = [s for s in SPANS.get_finished_spans() if s.name == "chat fake-primary"]
     assert genai, names
     attrs = genai[0].attributes or {}
     assert attrs["gen_ai.operation.name"] == "chat"
     assert attrs["gen_ai.usage.output_tokens"] == 5
     root = [
-        s for s in SPANS.get_finished_spans() if (s.attributes or {}).get("aegis.request_id") == rid
+        s
+        for s in SPANS.get_finished_spans()
+        if (s.attributes or {}).get("prahari.request_id") == rid
     ]
-    assert root and root[0].attributes["aegis.cache"] == "bypass"  # type: ignore[index]
+    assert root and root[0].attributes["prahari.cache"] == "bypass"  # type: ignore[index]
 
 
 async def test_control_plane_endpoints(gateway: Gateway) -> None:
@@ -347,7 +349,7 @@ async def test_chaos_kill_refuse_mode_fails_over(gateway: Gateway) -> None:
     )
     assert r.json()["applied"]["mode"] == "refuse"
     resp = await gateway.chat("x", headers={"cache-control": "no-cache"})
-    assert resp.headers["x-aegis-backend"] == "fallback"
+    assert resp.headers["x-prahari-backend"] == "fallback"
     await gateway.client.post(
         "/api/chaos", json={"backend": "primary", "action": "kill", "value": False}
     )
@@ -366,8 +368,8 @@ async def test_openapi_lists_the_control_plane(gateway: Gateway) -> None:
 
 
 def test_httpx_is_used_for_backends() -> None:
-    from aegis.backends.openai_compat import OpenAICompatBackend
-    from aegis.config import BackendConfig
+    from prahari.backends.openai_compat import OpenAICompatBackend
+    from prahari.config import BackendConfig
 
     b = OpenAICompatBackend(BackendConfig(name="x", base_url="http://h/v1", model="m"))
     assert isinstance(b._client, httpx.AsyncClient)
@@ -375,7 +377,7 @@ def test_httpx_is_used_for_backends() -> None:
 
 async def test_assistant_settings_facts_follow_the_config(gateway: Gateway) -> None:
     """The assistant reads key numbers as plain sentences built from the live config, not the YAML."""
-    from aegis.assistant import settings_facts
+    from prahari.assistant import settings_facts
 
     text = settings_facts(gateway.state)
     cfg = gateway.state.config.get()
@@ -387,7 +389,7 @@ async def test_assistant_settings_facts_follow_the_config(gateway: Gateway) -> N
 
 async def test_assistant_live_facts_tell_what_just_happened(gateway: Gateway) -> None:
     """After a chaos kill the assistant gets a plain timeline, primary named, oldest first."""
-    from aegis.assistant import live_facts, recent_events
+    from prahari.assistant import live_facts, recent_events
 
     state = gateway.state
     state.chaos.apply("primary", "kill", True)

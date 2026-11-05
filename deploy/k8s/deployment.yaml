@@ -4,17 +4,17 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: aegis-gateway
-  namespace: aegis
-  labels: {app.kubernetes.io/name: aegis-gateway}
+  name: prahari-gateway
+  namespace: prahari
+  labels: {app.kubernetes.io/name: prahari-gateway}
 spec:
   replicas: 1
   strategy: {type: Recreate}   # one writer for the SQLite ledger at a time
   selector:
-    matchLabels: {app.kubernetes.io/name: aegis-gateway}
+    matchLabels: {app.kubernetes.io/name: prahari-gateway}
   template:
     metadata:
-      labels: {app.kubernetes.io/name: aegis-gateway}
+      labels: {app.kubernetes.io/name: prahari-gateway}
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -26,13 +26,13 @@ spec:
       terminationGracePeriodSeconds: 20   # uvicorn drains for 10 s, then the lifespan cleans up
       containers:
         - name: gateway
-          image: ghcr.io/vinaybot/aegis-gateway:1.1.0
+          image: ghcr.io/vinaybot/prahari-gateway:1.1.0
           imagePullPolicy: IfNotPresent
           ports:
             - {name: http, containerPort: 8000}
           envFrom:
-            - configMapRef: {name: aegis-config}
-            - secretRef: {name: aegis-secrets}
+            - configMapRef: {name: prahari-config}
+            - secretRef: {name: prahari-secrets}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -59,17 +59,17 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: aegis-gateway-yaml
+            name: prahari-gateway-yaml
         - name: var
-          persistentVolumeClaim: {claimName: aegis-ledger}
+          persistentVolumeClaim: {claimName: prahari-ledger}
         - name: tmp
           emptyDir: {sizeLimit: 64Mi}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: aegis-ledger
-  namespace: aegis
+  name: prahari-ledger
+  namespace: prahari
 spec:
   accessModes: [ReadWriteOnce]
   resources:

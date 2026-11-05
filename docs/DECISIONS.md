@@ -6,19 +6,19 @@ Each entry: what was decided, why, and what was rejected.
 
 The point of this gateway is to show failover, hedging, breakers and caching working. LiteLLM's
 router has its own retries, fallbacks and cooldowns; letting it own the path would hide exactly the
-behaviour the demo exists to show, and two retry layers would multiply attempts. So AEGIS owns
+behaviour the demo exists to show, and two retry layers would multiply attempts. So PRAHARI owns
 reliability and LiteLLM appears where it is strongest, provider translation, in two forms:
 - **the real LiteLLM proxy server** (`litellm --config infra/litellm/config.yaml` on :4000),
-  model `aegis-litellm-proxy`. Its `num_retries` is 0; its master key comes from the
+  model `prahari-litellm-proxy`. Its `num_retries` is 0; its master key comes from the
   environment (`api_key_env`), never the YAML. Adding a cloud provider is one `model_list` entry.
-- **the LiteLLM SDK** inside the gateway process (`kind: litellm`), model `aegis-litellm`.
+- **the LiteLLM SDK** inside the gateway process (`kind: litellm`), model `prahari-litellm`.
 
-Both run inside AEGIS chains, so slots, breakers and hedging wrap them like any backend. LiteLLM
+Both run inside PRAHARI chains, so slots, breakers and hedging wrap them like any backend. LiteLLM
 is pinned to 1.80.0 (see below) and runs in its own environment (`make setup-serving`).
 
 ## Langfuse and Jaeger from one OTLP export
 
-Spans go to Jaeger always and to Langfuse when `AEGIS_LANGFUSE_PUBLIC_KEY`/`SECRET_KEY` are set:
+Spans go to Jaeger always and to Langfuse when `PRAHARI_LANGFUSE_PUBLIC_KEY`/`SECRET_KEY` are set:
 one OTLP/HTTP exporter each (Langfuse's endpoint is `{host}/api/public/otel` with Basic auth), so a
 slow Langfuse never delays Jaeger. No SDK: the spans carry Langfuse's own attributes
 (`langfuse.trace.name`, `langfuse.user.id` = tenant, tags, `langfuse.observation.type`), so the
@@ -58,7 +58,7 @@ at pinning) in their own environment. A GPU box would be one more YAML entry (`v
 
 Veritas (assignment3) already had a tuned Presidio setup (small spaCy model, a narrowed entity list,
 Aadhaar/PAN/any-domain email recognisers, a given-name list, a plausible-name filter) and regex
-injection patterns. Those are reused (`backend/aegis/guardrails/`). Its DeBERTa injection classifier
+injection patterns. Those are reused (`backend/prahari/guardrails/`). Its DeBERTa injection classifier
 is not: it needs torch, about 1.5 GB resident, which does not fit beside two local models. The regex
 layer catches the overt framings; subtler injections are a documented gap. Redaction replaces values
 with typed placeholders (`<EMAIL_ADDRESS>`) instead of Veritas's reversible vault: a gateway has no
@@ -99,7 +99,7 @@ The Chaos Lab's "kill" freezes `mlx_lm.server` with `SIGSTOP` (pid in `var/run/m
 really hang and probes really time out; "revive" sends `SIGCONT`. The system Ollama app is not the
 gateway's process, so for it "kill" refuses connections at the gateway's edge instead. Every chaos
 action auto-reverts (120 s) and the gateway sends `SIGCONT` on shutdown so a model is never left
-frozen. Chaos endpoints exist only with `AEGIS_CHAOS_ENABLED=1`.
+frozen. Chaos endpoints exist only with `PRAHARI_CHAOS_ENABLED=1`.
 
 ## Redis Stack in Colima
 
@@ -119,7 +119,7 @@ multi-hue look to black space with one cyan/violet accent family, which reads as
 ## Images
 
 The robot pictures were supplied by the user and lifted from their backgrounds on-device with
-Apple Vision; the 1.20.15 picture is Meet AEGIS. The 1.20.10 picture, offered for the flying
+Apple Vision; the 1.20.15 picture is Meet PRAHARI. The 1.20.10 picture, offered for the flying
 assistant, was not used: it is a watermarked Dreamstime stock preview (watermark across the face,
 captured from a search page), so it is not licensed. A later picture (2.41.50) was
 tried for the chatbot, then replaced at the user's request by an original model. The assistant is
@@ -181,7 +181,7 @@ This is a deliberate exception to the Web Interface Guidelines' "use the browser
 ## Secure by default, convenient in dev
 
 The Week 3 review flagged `AUTH_ENABLED` defaulting to false. Here the default is the safe one:
-`AEGIS_ENV=production` unless set. Production requires an admin credential for the control plane,
+`PRAHARI_ENV=production` unless set. Production requires an admin credential for the control plane,
 refuses chaos even if the flag is on, and never trusts loopback (behind a reverse proxy everyone
 looks local). Dev mode is an explicit opt-in that `scripts/dev.sh` makes, and the gateway logs a
 warning when it is on. Rejected: a separate `AUTH_ENABLED` switch (one more way to be insecure)
@@ -317,7 +317,7 @@ models and raises its own typed errors (`AuthenticationError`, `RateLimitError`.
 Gateway slots only count what the gateway sent. vLLM knows its real load: requests running and
 queued inside the engine, how full its paged KV cache is, how often its prefix cache hits. The
 health monitor reads vLLM's `/metrics` with each probe, Prometheus re-exports it
-(`aegis_engine_*`), the map shows it, and the router uses it: a backend that reports 4+ queued
+(`prahari_engine_*`), the map shows it, and the router uses it: a backend that reports 4+ queued
 requests or a 95%-full KV cache is moved to the back of the chain for new requests (and is not
 used as a hedge target), so traffic spills before latency climbs. It is never dropped: alone, it
 still serves. Stats older than 5 s are ignored, and a missed read keeps the last ones.

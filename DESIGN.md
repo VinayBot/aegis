@@ -1,4 +1,4 @@
-# AEGIS design system
+# PRAHARI design system
 
 **Theme: inside the machine, in deep space.** A command deck for an AI system: true black space with
 drifting stars and a faint Milky Way, frosted glass panels like the robot's tablet, and one accent
@@ -86,9 +86,9 @@ and stop after ten items; numbers count only on meaningful change; every effect 
 Two robots supplied by the user, lifted from their backgrounds on-device with Apple Vision
 (`scripts/cutout.swift`) and exported as AVIF/WebP at several widths (largest first-screen image
 47 KB): the hover robot (hero, with a live LED face and a live chart on its tablet) and the standing
-robot (Meet AEGIS, with eyes that follow the pointer). Overlay regions (face screen polygon, eyes,
+robot (Meet PRAHARI, with eyes that follow the pointer). Overlay regions (face screen polygon, eyes,
 tablet quad) are measured once and stored in `frontend/src/config/robotRegions.json`.
-Meet AEGIS uses the user's 1.20.15 robot picture. The chatbot is modelled, not a picture (see
+Meet PRAHARI uses the user's 1.20.15 robot picture. The chatbot is modelled, not a picture (see
 docs/DECISIONS.md, Images). The tunnel and the reel show screenshots of this site's own pages
 (`tools/screens.mjs`), not stock photography.
 

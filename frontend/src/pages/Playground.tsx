@@ -9,11 +9,11 @@ import { useLive } from "../lib/live";
 import { EASE_UI, useReducedMotion } from "../lib/motion";
 
 const KEYS = [
-  ["aegis-demo-key", "demo"],
+  ["prahari-demo-key", "demo"],
   ["veritas-key", "veritas"],
   ["nexus-key", "nexus"],
-  ["aegis-flood-key", "flood-test (1,500 tpm)"],
-  ["aegis-budget-key", "budget-test (tiny budget)"],
+  ["prahari-flood-key", "flood-test (1,500 tpm)"],
+  ["prahari-budget-key", "budget-test (tiny budget)"],
 ] as const;
 
 /** Deterministic paraphrases, so "rephrase and resend" exercises the semantic cache honestly
@@ -41,7 +41,7 @@ interface Run {
 /** Thumbs up/down on an answer: stored per tenant, metered, and a Langfuse score on its trace. */
 function Rate({ run }: { run: Run }) {
   const [sent, setSent] = useState<"up" | "down" | null>(null);
-  const requestId = run.headers["x-aegis-request-id"];
+  const requestId = run.headers["x-prahari-request-id"];
   if (!run.result || run.result.status !== 200 || !requestId) return null;
   const rate = async (rating: "up" | "down") => {
     await api("/v1/feedback", { method: "POST", json: { request_id: requestId, rating }, headers: { authorization: `Bearer ${run.key}` } }).catch(() => undefined);
@@ -79,8 +79,8 @@ function TraceChip({ run }: { run: Run }) {
   }
   return (
     <p className="flex flex-wrap gap-x-3 gap-y-1 text-sm text-ink-soft">
-      <span>cache: <strong className={h["x-cache"] === "miss" || h["x-cache"] === "bypass" ? "text-ink" : "text-violet"}>{h["x-cache"]}</strong>{h["x-aegis-similarity"] ? ` (${Number(h["x-aegis-similarity"]).toFixed(3)})` : ""}</span>
-      <span>backend: <strong className="text-ink">{backendLabel(h["x-aegis-backend"])}</strong></span>
+      <span>cache: <strong className={h["x-cache"] === "miss" || h["x-cache"] === "bypass" ? "text-ink" : "text-violet"}>{h["x-cache"]}</strong>{h["x-prahari-similarity"] ? ` (${Number(h["x-prahari-similarity"]).toFixed(3)})` : ""}</span>
+      <span>backend: <strong className="text-ink">{backendLabel(h["x-prahari-backend"])}</strong></span>
       {h["x-transport"] === "websocket" && <span>over <strong className="text-ink">WebSocket</strong></span>}
       {s?.hedged ? <span className="text-amber">hedged</span> : null}
       {Number(s?.failovers) > 0 && <span className="text-amber">{String(s?.failovers)} failover(s)</span>}
@@ -88,7 +88,7 @@ function TraceChip({ run }: { run: Run }) {
       <span>{fmtMs(Number(s?.latency_ms))}</span>
       {s?.ttft_ms ? <span>TTFT {fmtMs(Number(s.ttft_ms))}</span> : null}
       <span>est. saved {fmtUsd(Number(s?.saved_est_usd ?? 0))}</span>
-      {h["x-aegis-budget-warning"] && <span className="text-amber">budget warning</span>}
+      {h["x-prahari-budget-warning"] && <span className="text-amber">budget warning</span>}
     </p>
   );
 }
@@ -122,8 +122,8 @@ function MiniTrace({ run }: { run: Run }) {
 
 export default function Playground() {
   const mode = useLive((s) => s.mode);
-  const [models, setModels] = useState<string[]>(["aegis-chat"]);
-  const [model, setModel] = useState("aegis-chat");
+  const [models, setModels] = useState<string[]>(["prahari-chat"]);
+  const [model, setModel] = useState("prahari-chat");
   const [prompt, setPrompt] = useState("What is the refund policy for annual plans?");
   const [temperature, setTemperature] = useState(0);
   const [key, setKey] = useState<string>(KEYS[0][0]);

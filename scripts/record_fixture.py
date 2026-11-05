@@ -22,12 +22,12 @@ BASE = "http://127.0.0.1:8000"
 OUT = Path(__file__).resolve().parent.parent / "frontend" / "public" / "replay" / "fixture.json"
 
 
-async def chat(client: httpx.AsyncClient, prompt: str, key: str = "aegis-demo-key", no_cache: bool = False) -> None:
+async def chat(client: httpx.AsyncClient, prompt: str, key: str = "prahari-demo-key", no_cache: bool = False) -> None:
     headers = {"authorization": f"Bearer {key}"}
     if no_cache:
         headers["cache-control"] = "no-cache"
     await client.post("/v1/chat/completions", headers=headers, json={
-        "model": "aegis-chat", "temperature": 0, "max_tokens": 60, "stream": False,
+        "model": "prahari-chat", "temperature": 0, "max_tokens": 60, "stream": False,
         "messages": [{"role": "user", "content": prompt}]})
 
 

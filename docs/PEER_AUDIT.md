@@ -1,6 +1,6 @@
 # Peer audit
 
-A guide for a classmate auditing AEGIS, and the record of the audits done so far. Each check has
+A guide for a classmate auditing PRAHARI, and the record of the audits done so far. Each check has
 the command or the place to look, so an audit takes about 30 minutes and needs no prior context. 27 findings are recorded and fixed below.
 
 ## How to audit (for the reviewer)
@@ -22,10 +22,10 @@ finding. Please add your findings to the table at the end (or open an issue).
 
 | Check | How |
 | --- | --- |
-| Secure by default | `cd backend && uv run uvicorn aegis.main:app --port 8010`, then `curl -i localhost:8010/api/config`: expect 401 (production mode is the default) |
-| No raw keys leak | `curl -s localhost:8000/api/tenants localhost:8000/api/config \| grep -c aegis-demo-key` prints 0 |
+| Secure by default | `cd backend && uv run uvicorn prahari.main:app --port 8010`, then `curl -i localhost:8010/api/config`: expect 401 (production mode is the default) |
+| No raw keys leak | `curl -s localhost:8000/api/tenants localhost:8000/api/config \| grep -c prahari-demo-key` prints 0 |
 | No IDOR | `test_a_tenant_never_sees_another_tenants_requests` in `backend/tests/test_production.py` |
-| Input bounds | `curl -s localhost:8000/v1/chat/completions -H 'authorization: Bearer aegis-demo-key' -H 'content-type: application/json' -d '{"messages":[{"role":"wizard","content":"x"}]}'` is a 400 |
+| Input bounds | `curl -s localhost:8000/v1/chat/completions -H 'authorization: Bearer prahari-demo-key' -H 'content-type: application/json' -d '{"messages":[{"role":"wizard","content":"x"}]}'` is a 400 |
 | PII never reaches a model | Playground: "my name is vinay and vinaysharma@gmail is my email": the model sees placeholders |
 | Unsafe prompts blocked | Playground: a weapons question returns `HTTP 400 · unsafe_content` |
 
@@ -53,7 +53,7 @@ finding. Please add your findings to the table at the end (or open an issue).
 
 | # | Finding | Severity | Fix |
 | --- | --- | --- | --- |
-| 1 | The PII filter redacted the project's own words ("Mac", "Redis Stack", "Playground"), so the assistant answered "AEGIS runs on a single <PERSON>" | medium | Known non-names list; a real name beside them is still redacted |
+| 1 | The PII filter redacted the project's own words ("Mac", "Redis Stack", "Playground"), so the assistant answered "PRAHARI runs on a single <PERSON>" | medium | Known non-names list; a real name beside them is still redacted |
 | 2 | "my name is vinay and vinaysharma@gmail is my email" reached the model unredacted | high | Self-introduced names in any case, emails without a TLD |
 | 3 | The assistant answered "[1]" to "What just happened to the primary?" | medium | A plain timeline of recent events first in the live context; the demo script no longer indexed |
 | 4 | The crash scenario could say "Probe served by ollama-llama" | low | It reports only what is certain |

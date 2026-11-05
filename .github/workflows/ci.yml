@@ -28,7 +28,7 @@ jobs:
       - run: uv run ruff check . && uv run ruff format --check .
       - run: uv run mypy
       - name: tests (unit, HTTP integration, SIGSTOP, eval gate) with a coverage floor
-        run: uv run pytest -q --cov=aegis --cov-report=term-missing:skip-covered --cov-fail-under=85
+        run: uv run pytest -q --cov=prahari --cov-report=term-missing:skip-covered --cov-fail-under=85
       - name: evaluation report
         run: uv run python -m evals.run --report eval-report.json
       - uses: actions/upload-artifact@v4
@@ -81,23 +81,23 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
-        with: { context: ., load: true, tags: "aegis-gateway:ci", cache-from: type=gha, cache-to: "type=gha,mode=max" }
+        with: { context: ., load: true, tags: "prahari-gateway:ci", cache-from: type=gha, cache-to: "type=gha,mode=max" }
       - name: smoke test
         run: |
-          docker run -d --name aegis -p 8000:8000 aegis-gateway:ci
+          docker run -d --name prahari -p 8000:8000 prahari-gateway:ci
           for i in $(seq 1 60); do curl -fs http://127.0.0.1:8000/healthz && break; sleep 2; done
           curl -fs http://127.0.0.1:8000/healthz | grep -q alive
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/readyz)" = 503   # no models here
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/architecture)" = 401
           # the repo's demo keys are public: production must not accept them
-          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'authorization: Bearer aegis-demo-key' -H 'content-type: application/json' -d '{"messages":[{"role":"user","content":"hi"}]}' http://127.0.0.1:8000/v1/chat/completions)" = 401
-          test "$(docker exec aegis id -u)" = 10001                                               # not root
-          docker logs aegis 2>&1 | head -5 | grep -q '"level"'                                    # JSON logs
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'authorization: Bearer prahari-demo-key' -H 'content-type: application/json' -d '{"messages":[{"role":"user","content":"hi"}]}' http://127.0.0.1:8000/v1/chat/completions)" = 401
+          test "$(docker exec prahari id -u)" = 10001                                               # not root
+          docker logs prahari 2>&1 | head -5 | grep -q '"level"'                                    # JSON logs
       - if: always()
-        run: docker logs aegis 2>&1 | tail -40
+        run: docker logs prahari 2>&1 | tail -40
       - name: SBOM of the image (SPDX)
         uses: anchore/sbom-action@v0
-        with: {image: "aegis-gateway:ci", format: spdx-json, output-file: sbom.spdx.json, upload-artifact: true}
+        with: {image: "prahari-gateway:ci", format: spdx-json, output-file: sbom.spdx.json, upload-artifact: true}
       - name: vulnerability report (Trivy, report only; fixed upstream CVEs are bumped by Dependabot)
         uses: aquasecurity/trivy-action@v0.36.0
-        with: {image-ref: "aegis-gateway:ci", severity: "CRITICAL,HIGH", ignore-unfixed: true, exit-code: "0", format: table}
+        with: {image-ref: "prahari-gateway:ci", severity: "CRITICAL,HIGH", ignore-unfixed: true, exit-code: "0", format: table}

@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
 
-const gateway = process.env.AEGIS_GATEWAY_URL ?? "http://127.0.0.1:8000";
+const gateway = process.env.PRAHARI_GATEWAY_URL ?? "http://127.0.0.1:8000";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],

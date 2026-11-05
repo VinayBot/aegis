@@ -1,5 +1,5 @@
 """The control plane end to end: every guided scenario, the playground load generators, cache and
-budget administration, self-check, docs, traces and the AEGIS assistant."""
+budget administration, self-check, docs, traces and the PRAHARI assistant."""
 
 from __future__ import annotations
 
@@ -105,7 +105,7 @@ async def test_selfcheck_runs_every_stage(gateway: Gateway) -> None:
 
 async def test_request_detail_and_recent_events(gateway: Gateway) -> None:
     r = await gateway.chat("detail probe")
-    request_id = r.headers["x-aegis-request-id"]
+    request_id = r.headers["x-prahari-request-id"]
     await asyncio.sleep(0.6)
     detail = (await gateway.client.get(f"/api/requests/{request_id}")).json()
     assert detail["request"]["id"] == request_id and detail["events"]
@@ -144,7 +144,7 @@ async def test_assistant_answers_through_the_gateway(
     sources = items[0]["sources"]
     assert any(s["n"] == "live" for s in sources)  # live state was part of the context
     meta = next(i for i in items if i["type"] == "meta")
-    assert meta["status"] == 200 and meta["headers"]["x-aegis-request-id"]
+    assert meta["status"] == 200 and meta["headers"]["x-prahari-request-id"]
     sent = fakes["primary"].requests[-1]["messages"]
     assert "What happened in the last" in sent[-1]["content"]  # the timeline came first
 

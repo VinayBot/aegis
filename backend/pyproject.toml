@@ -1,7 +1,7 @@
 [project]
-name = "aegis"
+name = "prahari"
 version = "1.1.0"
-description = "AEGIS: an AI gateway with semantic caching, failover, hedging and live observability"
+description = "PRAHARI: an AI gateway with semantic caching, failover, hedging and live observability"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "fastapi>=0.115",
@@ -53,7 +53,7 @@ build-backend = "hatchling.build"
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["aegis"]
+packages = ["prahari"]
 
 [tool.ruff]
 line-length = 100
@@ -82,7 +82,7 @@ disallow_incomplete_defs = true
 warn_return_any = true
 no_implicit_reexport = true
 strict_equality = true
-packages = ["aegis", "evals"]
+packages = ["prahari", "evals"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

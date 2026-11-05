@@ -9,7 +9,7 @@ a pass threshold. CI runs the offline suites on every push and fails the build w
   injection         are prompt-injection framings blocked, and ordinary prompts let through?
   output_redaction  are emails, phones, cards and secrets in model output caught, numbers kept?
   safety (--live)   does Llama Guard block hazards but not developer phrasing? (needs Ollama)
-  assistant_rag (--live)  the AEGIS assistant, a RAG system over these docs: does retrieval find
+  assistant_rag (--live)  the PRAHARI assistant, a RAG system over these docs: does retrieval find
                     the right document, does the answer state the right fact, and does it decline
                     what the docs do not cover? (needs `make dev`)
 
@@ -91,8 +91,8 @@ def binary(
 
 
 def semantic_cache() -> Suite:
-    from aegis.config import load_config
-    from aegis.embedder import Embedder
+    from prahari.config import load_config
+    from prahari.embedder import Embedder
 
     threshold = load_config(CONFIG).cache.semantic_threshold
     rows = load("semantic_cache")
@@ -109,7 +109,7 @@ def semantic_cache() -> Suite:
 
 
 def pii() -> Suite:
-    from aegis.guardrails import pii as pii_mod
+    from prahari.guardrails import pii as pii_mod
 
     rows = load("pii")
     found = [set(pii_mod.redact(r["text"]).counts) for r in rows]
@@ -127,7 +127,7 @@ def pii() -> Suite:
 
 
 def injection() -> Suite:
-    from aegis.guardrails import injection as inj
+    from prahari.guardrails import injection as inj
 
     rows = load("injection")
     predicted = [inj.scan(r["text"]).is_injection for r in rows]
@@ -135,7 +135,7 @@ def injection() -> Suite:
 
 
 def output_redaction() -> Suite:
-    from aegis.guardrails.output import redact_text
+    from prahari.guardrails.output import redact_text
 
     rows = load("output_redaction")
     found: list[set[str]] = []
@@ -157,8 +157,8 @@ def output_redaction() -> Suite:
 
 
 def safety() -> Suite:
-    from aegis.config import load_config
-    from aegis.guardrails.safety import SafetyClassifier
+    from prahari.config import load_config
+    from prahari.guardrails.safety import SafetyClassifier
 
     sc = load_config(CONFIG).safety
     rows = load("safety")
@@ -191,7 +191,7 @@ def assistant_rag() -> Suite:
     """Live: every question goes through the real assistant and the real gateway and model."""
     import httpx
 
-    from aegis.assistant import NO_ANSWER
+    from prahari.assistant import NO_ANSWER
 
     rows = load("assistant_rag")
     failures: list[dict[str, Any]] = []

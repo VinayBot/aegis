@@ -34,7 +34,7 @@ export default function StandingRobot({ excited = false }: { excited?: boolean }
           height={height}
           loading="lazy"
           decoding="async"
-          alt="AEGIS standing in a starfield, a small white robot with a dark visor and two glowing cyan eye rings"
+          alt="PRAHARI standing in a starfield, a small white robot with a dark visor and two glowing cyan eye rings"
           className="block h-full w-full object-cover"
         />
       </picture>

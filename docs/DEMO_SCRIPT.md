@@ -3,7 +3,7 @@
 About eight minutes. Before you start: `make dev`, open http://127.0.0.1:5173 full screen, and open
 Jaeger (http://127.0.0.1:16686) in a second tab.
 
-1. **Home: dive into AEGIS (30 s).** Point at the robot: its face is a live LED display and its tablet
+1. **Home: dive into PRAHARI (30 s).** Point at the robot: its face is a live LED display and its tablet
    shows the gateway's real requests per second. Scroll slowly: the camera pushes through its face
    screen into a field of firing neurons. Each region (The Gate, Memory, The Hive, The Reflexes, The Ledger)
    shows one live number. At the end: "Every region is a node in a live graph". Click *See it running
@@ -29,7 +29,7 @@ Jaeger (http://127.0.0.1:16686) in a second tab.
    lights stop at the rate limiter.
 8. **PII in prompt.** Run *PII in prompt*. The guardrails node shows "PII redacted"; open the request
    in Traces (or Jaeger) to show the redaction counts on the span, never the values.
-9. **Ask AEGIS.** Click the robot in the bottom-right corner (it wakes up) and ask: "What just happened to the primary?"
+9. **Ask PRAHARI.** Click the robot in the bottom-right corner (it wakes up) and ask: "What just happened to the primary?"
    It answers from live state and the docs, through the gateway, with its own trace chip; click
    *watch this answer's journey* to replay it on the map.
 

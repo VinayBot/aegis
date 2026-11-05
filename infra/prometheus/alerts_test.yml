@@ -7,46 +7,46 @@ tests:
     interval: 1m
     input_series:
       # 100 requests a minute, 20 of them errors: 20% error ratio, far above 14.4 x 0.5%
-      - series: 'aegis_requests_total{model="aegis-chat",backend="mlx-qwen",cache="miss",status="ok"}'
+      - series: 'prahari_requests_total{model="prahari-chat",backend="mlx-qwen",cache="miss",status="ok"}'
         values: '0+80x90'
-      - series: 'aegis_requests_total{model="aegis-chat",backend="mlx-qwen",cache="miss",status="error"}'
+      - series: 'prahari_requests_total{model="prahari-chat",backend="mlx-qwen",cache="miss",status="error"}'
         values: '0+20x90'
     alert_rule_test:
       - eval_time: 75m
-        alertname: AegisErrorBudgetFastBurn
+        alertname: PrahariErrorBudgetFastBurn
         exp_alerts:
           - exp_labels: {severity: page}
             exp_annotations:
-              summary: "AEGIS is burning its error budget fast (20% errors)"
+              summary: "PRAHARI is burning its error budget fast (20% errors)"
               runbook: "docs/PRODUCTION_READINESS.md#runbook"
 
   - name: a healthy gateway does not page
     interval: 1m
     input_series:
-      - series: 'aegis_requests_total{model="aegis-chat",backend="mlx-qwen",cache="miss",status="ok"}'
+      - series: 'prahari_requests_total{model="prahari-chat",backend="mlx-qwen",cache="miss",status="ok"}'
         values: '0+100x90'
-      - series: 'aegis_requests_total{model="aegis-chat",backend="mlx-qwen",cache="miss",status="error"}'
+      - series: 'prahari_requests_total{model="prahari-chat",backend="mlx-qwen",cache="miss",status="error"}'
         values: '0+0x90'
     alert_rule_test:
       - eval_time: 75m
-        alertname: AegisErrorBudgetFastBurn
+        alertname: PrahariErrorBudgetFastBurn
         exp_alerts: []
 
   - name: every breaker open pages, one breaker open tickets
     interval: 1m
     input_series:
-      - series: 'aegis_breaker_state{backend="mlx-qwen"}'
+      - series: 'prahari_breaker_state{backend="mlx-qwen"}'
         values: '2x10'
-      - series: 'aegis_breaker_state{backend="ollama-llama"}'
+      - series: 'prahari_breaker_state{backend="ollama-llama"}'
         values: '2x10'
     alert_rule_test:
       - eval_time: 5m
-        alertname: AegisNoBackendAvailable
+        alertname: PrahariNoBackendAvailable
         exp_alerts:
           - exp_labels: {severity: page}
-            exp_annotations: {summary: "Every AEGIS backend has its breaker open"}
+            exp_annotations: {summary: "Every PRAHARI backend has its breaker open"}
       - eval_time: 5m
-        alertname: AegisBreakerOpen
+        alertname: PrahariBreakerOpen
         exp_alerts:
           - exp_labels: {severity: ticket, backend: mlx-qwen}
             exp_annotations: {summary: "Circuit breaker open on mlx-qwen for 2 minutes"}

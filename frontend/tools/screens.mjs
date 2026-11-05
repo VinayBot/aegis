@@ -3,7 +3,7 @@ import { chromium } from "@playwright/test";
 const pages = [["architecture", "/architecture"], ["control-room", "/control-room"], ["chaos", "/chaos"], ["playground", "/playground"], ["traces", "/traces"], ["docs", "/docs"], ["home", "/"], ["assistant", "/docs"]];
 const b = await chromium.launch({ headless: false, args: ["--use-angle=metal"] });
 const p = await b.newPage({ viewport: { width: 1440, height: 900 } });
-await p.addInitScript(() => localStorage.setItem("aegis-motion-paused", "0"));
+await p.addInitScript(() => localStorage.setItem("prahari-motion-paused", "0"));
 for (const [name, path] of pages) {
   await p.goto(`http://127.0.0.1:5173${path}`, { waitUntil: "networkidle" });
   await p.waitForTimeout(2500);
