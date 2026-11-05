@@ -17,7 +17,10 @@ from tests.fake_backend import FakeControl
 
 
 def client(gateway: Gateway, key: str = "k-demo") -> openai.AsyncOpenAI:
-    return openai.AsyncOpenAI(base_url=f"{gateway.url}/v1", api_key=key, max_retries=0)
+    # a generous timeout: on a shared CI runner the SDK's 5 s connect default was once too short
+    return openai.AsyncOpenAI(
+        base_url=f"{gateway.url}/v1", api_key=key, max_retries=0, timeout=60.0
+    )
 
 
 async def test_streaming_chat_through_the_sdk(gateway: Gateway) -> None:
