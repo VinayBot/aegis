@@ -221,6 +221,9 @@ def _backend_node(state: AppState, cfg: GatewayConfig, name: str) -> dict[str, A
             "failure_rate_threshold": cfg.breaker.failure_rate,
         },
         "slots": {"capacity": rt.capacity, "in_flight": rt.in_flight} if rt else None,
+        # what the serving engine reports about itself (vLLM), and whether routing avoids it
+        "engine": rt.engine.as_dict() if rt and rt.engine else None,
+        "saturated": rt.saturated() if rt else False,
         "stats": {
             "ttft_p50_ms": _r(rt.p(0.5)) if rt else None,
             "ttft_p95_ms": _r(rt.p(0.95)) if rt else None,

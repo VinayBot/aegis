@@ -62,7 +62,8 @@ so one trace runs from a client app (NEXUS, Veritas) through the gateway to the 
 
 | Situation | What happens | Where |
 | --- | --- | --- |
-| Primary busy (its one slot taken) | wait up to 2 s, then the fallback | `router._acquire` |
+| Primary busy (its slots taken) | wait up to 2 s, then the fallback | `router._acquire` |
+| vLLM reports its own queue (4+ waiting) or a 95%-full KV cache | it goes to the back of the chain for new requests, so traffic spills before latency climbs; never dropped while it is the only option | `engine.py`, `router._load_aware` |
 | Nothing free for 10 s | `503`, `Retry-After: 2` | `router._acquire` |
 | Primary slow to first token | after its p95 TTFT (min 250 ms), hedge to a free backend; loser cancelled, slot released | `router.route` |
 | Connect error, 5xx, 429, unknown model | failover to the next backend before the first token; breaker counts an error | `router.route` |

@@ -31,6 +31,10 @@ class BackendConfig(BaseModel):
     api_key_env: str | None = None
     # an optional backend being down does not degrade overall health (vLLM, the LiteLLM proxy)
     optional: bool = False
+    # read the engine's own /metrics (vLLM) and route around it when it reports saturation
+    engine_metrics: bool = False
+    saturation_waiting: int = 4  # requests queued inside the engine
+    saturation_kv: float = Field(default=0.95, gt=0.0, le=1.0)  # paged KV cache in use
     defaults: dict[str, Any] = Field(default_factory=dict)
 
 
