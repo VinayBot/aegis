@@ -41,10 +41,15 @@ async def serve(app: Any, port: int) -> tuple[uvicorn.Server, asyncio.Task[None]
         uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", lifespan="on")
     )
     task = asyncio.get_running_loop().create_task(server.serve())
-    for _ in range(200):
-        if server.started:
+    # startup loads the embedder and builds the docs index: seconds on a laptop, longer on a
+    # shared CI runner, so wait up to a minute and say so if it never comes up
+    for _ in range(3000):
+        if server.started or task.done():
             break
         await asyncio.sleep(0.02)
+    if not server.started:
+        exc = task.exception() if task.done() else None
+        raise RuntimeError(f"test server on port {port} did not start: {exc!r}")
     return server, task
 
 
