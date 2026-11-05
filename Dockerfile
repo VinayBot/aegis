@@ -15,7 +15,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # ---- 2. the Python environment
-FROM python:3.12.13-slim-bookworm AS build
+FROM python:3.15.0-slim-bookworm AS build
 COPY --from=ghcr.io/astral-sh/uv:0.12.23 /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never \
     FASTEMBED_CACHE_PATH=/opt/models
@@ -28,7 +28,7 @@ RUN uv sync --frozen --no-dev
 RUN .venv/bin/python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"
 
 # ---- 3. runtime
-FROM python:3.12.13-slim-bookworm AS runtime
+FROM python:3.15.0-slim-bookworm AS runtime
 RUN groupadd --system --gid 10001 aegis \
  && useradd --system --uid 10001 --gid aegis --home-dir /app --shell /usr/sbin/nologin aegis
 WORKDIR /app
