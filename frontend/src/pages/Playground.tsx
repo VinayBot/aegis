@@ -1,9 +1,9 @@
 // Send requests by hand and see exactly what the gateway did with each one.
 import { BlurWords } from "../components/fx";
 import { motion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, streamChat, type StreamResult } from "../lib/api";
+import { api, streamChat, wsChat, type StreamResult } from "../lib/api";
 import { backendLabel, fmtMs, fmtUsd } from "../lib/format";
 import { useLive } from "../lib/live";
 import { EASE_UI, useReducedMotion } from "../lib/motion";
@@ -35,12 +35,40 @@ interface Run {
   result: StreamResult | null;
   started: number;
   headers: Record<string, string>;
+  key: string;
+}
+
+/** Thumbs up/down on an answer: stored per tenant, metered, and a Langfuse score on its trace. */
+function Rate({ run }: { run: Run }) {
+  const [sent, setSent] = useState<"up" | "down" | null>(null);
+  const requestId = run.headers["x-aegis-request-id"];
+  if (!run.result || run.result.status !== 200 || !requestId) return null;
+  const rate = async (rating: "up" | "down") => {
+    await api("/v1/feedback", { method: "POST", json: { request_id: requestId, rating }, headers: { authorization: `Bearer ${run.key}` } }).catch(() => undefined);
+    setSent(rating);
+  };
+  return (
+    <div className="mt-2 flex items-center gap-2 text-sm text-ink-soft">
+      <span>Was this answer good?</span>
+      <button type="button" className="btn btn-quiet min-h-9 px-3" aria-pressed={sent === "up"} aria-label="Good answer" onClick={() => void rate("up")}>👍</button>
+      <button type="button" className="btn btn-quiet min-h-9 px-3" aria-pressed={sent === "down"} aria-label="Bad answer" onClick={() => void rate("down")}>👎</button>
+      {sent && <span className="text-xs text-ink-mute">Recorded on this request's trace.</span>}
+    </div>
+  );
 }
 
 function TraceChip({ run }: { run: Run }) {
   const s = run.result?.summary as Record<string, unknown> | null | undefined;
   const h = run.headers;
   if (!run.result) return <p className="text-sm text-ink-mute">streaming…</p>;
+  const stopped = (run.result.error as { code?: string } | null)?.code === "cancelled";
+  if (stopped) {
+    return (
+      <p className="text-sm text-amber">
+        Stopped mid-answer over {h["x-transport"] === "websocket" ? "the WebSocket" : "SSE"}: the gateway cancelled the model call and freed its slot.
+      </p>
+    );
+  }
   if (run.result.status !== 200) {
     const err = run.result.error as { message?: string; code?: string } | null;
     return (
@@ -53,6 +81,7 @@ function TraceChip({ run }: { run: Run }) {
     <p className="flex flex-wrap gap-x-3 gap-y-1 text-sm text-ink-soft">
       <span>cache: <strong className={h["x-cache"] === "miss" || h["x-cache"] === "bypass" ? "text-ink" : "text-violet"}>{h["x-cache"]}</strong>{h["x-aegis-similarity"] ? ` (${Number(h["x-aegis-similarity"]).toFixed(3)})` : ""}</span>
       <span>backend: <strong className="text-ink">{backendLabel(h["x-aegis-backend"])}</strong></span>
+      {h["x-transport"] === "websocket" && <span>over <strong className="text-ink">WebSocket</strong></span>}
       {s?.hedged ? <span className="text-amber">hedged</span> : null}
       {Number(s?.failovers) > 0 && <span className="text-amber">{String(s?.failovers)} failover(s)</span>}
       <span>{Number(s?.tokens_in ?? 0) + Number(s?.tokens_out ?? 0)} tokens{s?.usage_estimated ? " (estimated ±30%)" : ""}</span>
@@ -103,6 +132,8 @@ export default function Playground() {
   const [busy, setBusy] = useState(false);
   const [rephrases, setRephrases] = useState(0);
   const [batch, setBatch] = useState<{ label: string; results: { status: number; cache: string }[] } | null>(null);
+  const [transport, setTransport] = useState<"sse" | "ws">("sse");
+  const stopper = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (mode !== "live") return;
@@ -110,9 +141,11 @@ export default function Playground() {
   }, [mode]);
 
   const one = async (p: string, id: number) => {
-    setRuns((r) => [{ id, prompt: p, text: "", result: null, started: Date.now(), headers: {} }, ...r].slice(0, 6));
-    const res = await streamChat({ model, temperature, max_tokens: 160, messages: [{ role: "user", content: p }] }, {
-      key, noCache,
+    setRuns((r) => [{ id, prompt: p, text: "", result: null, started: Date.now(), headers: {}, key }, ...r].slice(0, 6));
+    stopper.current = new AbortController();
+    const chat = transport === "ws" ? wsChat : streamChat;
+    const res = await chat({ model, temperature, max_tokens: 160, messages: [{ role: "user", content: p }] }, {
+      key, noCache, signal: stopper.current.signal,
       onHeaders: (h) => setRuns((r) => r.map((x) => (x.id === id ? { ...x, headers: h } : x))),
       onToken: (tok) => setRuns((r) => r.map((x) => (x.id === id ? { ...x, text: x.text + tok } : x))),
     });
@@ -175,12 +208,21 @@ export default function Playground() {
             <input type="range" min={0} max={1.5} step={0.1} value={temperature} onChange={(e) => setTemperature(Number(e.target.value))} className="mt-2 w-full accent-[var(--cyan)]" />
             <span className="text-xs text-ink-mute">Part of the cache key: a different temperature is a different entry.</span>
           </label>
+          <fieldset className="text-sm text-ink-soft">
+            <legend>Transport</legend>
+            <div className="mt-1.5 flex gap-4">
+              <label className="flex items-center gap-2"><input type="radio" name="transport" checked={transport === "sse"} onChange={() => setTransport("sse")} className="accent-[var(--cyan)]" />Server-Sent Events</label>
+              <label className="flex items-center gap-2"><input type="radio" name="transport" checked={transport === "ws"} onChange={() => setTransport("ws")} className="accent-[var(--cyan)]" />WebSocket</label>
+            </div>
+            <span className="text-xs text-ink-mute">Same pipeline either way. Stop cancels the model call mid-answer.</span>
+          </fieldset>
           <label className="flex items-center gap-2 text-sm text-ink-soft">
             <input type="checkbox" checked={noCache} onChange={(e) => setNoCache(e.target.checked)} className="accent-[var(--cyan)]" />
             Bypass cache (Cache-Control: no-cache)
           </label>
           <div className="flex flex-wrap gap-2">
             <button type="submit" className="btn btn-primary" disabled={disabled}>Send</button>
+            {busy && <button type="button" className="btn btn-quiet" onClick={() => stopper.current?.abort()}>Stop</button>}
             <button type="button" className="btn btn-quiet" disabled={disabled} onClick={() => void sendTen()}>Send this 10× at once</button>
             <button type="button" className="btn btn-quiet" disabled={disabled} onClick={() => void resendRephrased()}>Rephrase and resend</button>
           </div>
@@ -213,6 +255,7 @@ export default function Playground() {
                 <p className="text-sm text-ink-mute">"{run.prompt}"</p>
                 <p className="mt-2 whitespace-pre-wrap leading-relaxed text-ink">{run.text || (run.result ? "" : "…")}</p>
                 <div className="mt-3"><TraceChip run={run} /></div>
+                <Rate run={run} />
               </div>
               <MiniTrace run={run} />
             </article>

@@ -112,6 +112,7 @@ function Tenants() {
             <th className="pb-2 pl-6 font-medium">budget used (est. cloud equivalent)</th>
             <th className="pb-2 text-right font-medium">429s</th>
             <th className="pb-2 text-right font-medium">saved</th>
+            <th className="pb-2 text-right font-medium">rating</th>
           </tr>
         </thead>
         <tbody>
@@ -120,7 +121,7 @@ function Tenants() {
             const soft = r.budget.soft / r.budget.hard;
             const tone = r.spent_est_usd >= r.budget.hard ? "var(--red)" : r.spent_est_usd >= r.budget.soft ? "var(--amber)" : "var(--cyan)";
             return (
-              <tr key={r.api_key} className="text-ink-soft">
+              <tr key={r.key_id} className="text-ink-soft">
                 <td className="py-2 pr-3 text-ink">{r.tenant}</td>
                 <td className="py-2 text-right font-tabular">{fmtInt(r.requests)}</td>
                 <td className="py-2 text-right font-tabular">{fmtInt(r.tokens)}</td>
@@ -135,6 +136,9 @@ function Tenants() {
                 </td>
                 <td className="py-2 text-right font-tabular" style={{ color: r.rate_limited ? "var(--red)" : undefined }}>{fmtInt(r.rate_limited)}</td>
                 <td className="py-2 text-right font-tabular">{fmtUsd(r.saved_est_usd)}</td>
+                <td className="py-2 text-right font-tabular" title={`${r.feedback_up ?? 0} up · ${r.feedback_down ?? 0} down`}>
+                  {(r.feedback_up ?? 0) + (r.feedback_down ?? 0) ? `${Math.round((100 * (r.feedback_up ?? 0)) / ((r.feedback_up ?? 0) + (r.feedback_down ?? 0)))}% 👍` : "–"}
+                </td>
               </tr>
             );
           })}
@@ -148,7 +152,7 @@ function Tenants() {
 export default function ControlRoom() {
   const metrics = useLive((s) => s.metrics);
   const mood = useSystemMood();
-  const [key, setKey] = useState("aegis-demo-key");
+  const [key, setKey] = useState("demo"); // a key id: raw keys never leave the gateway
   const s = metrics?.series;
   const t = (s?.t ?? []) as number[];
   const k = metrics?.kpis;

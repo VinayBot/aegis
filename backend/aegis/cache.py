@@ -50,6 +50,15 @@ def _digest(obj: Any) -> str:
     ).hexdigest()
 
 
+def _norm(message: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {"role": str(message.get("role")), "content": message_text(message)}
+    # tool turns: two conversations that differ only in a tool call or result are different
+    for extra in ("tool_calls", "tool_call_id", "name"):
+        if message.get(extra):
+            out[extra] = message[extra]
+    return out
+
+
 def build_keys(
     tenant: str,
     model: str,
@@ -57,9 +66,7 @@ def build_keys(
     params: dict[str, Any],
     semantic_max_tokens: int,
 ) -> CacheKeys:
-    norm: list[dict[str, str]] = [
-        {"role": str(m.get("role")), "content": message_text(m)} for m in messages
-    ]
+    norm: list[dict[str, Any]] = [_norm(m) for m in messages]
     exact = _digest({"t": tenant, "m": model, "msgs": norm, "p": params})
     partition = _digest({"t": tenant, "m": model, "p": params, "ctx": norm[:-1]})[:24]
     last_user = None

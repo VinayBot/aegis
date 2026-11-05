@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 ESTIMATE_MARGIN = 0.30
@@ -20,6 +21,13 @@ def message_text(message: dict[str, Any]) -> str:
     if isinstance(content, list):  # OpenAI content parts
         return " ".join(str(p.get("text", "")) for p in content if isinstance(p, dict))
     return ""
+
+
+def estimate_tools(tools: Any) -> int:
+    """Tool schemas are sent to the model as text, so they count toward the prompt."""
+    if not tools:
+        return 0
+    return estimate_text(json.dumps(tools, separators=(",", ":"), default=str))
 
 
 def estimate_messages(messages: list[dict[str, Any]]) -> int:

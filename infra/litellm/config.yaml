@@ -1,0 +1,26 @@
+# LiteLLM proxy (the real server: `litellm --config`), one backend in AEGIS's chain.
+#
+# AEGIS owns reliability (slots, breakers, hedging, chain retries), so LiteLLM's own retries are
+# off here: two retry layers would multiply attempts and hide failures from AEGIS's breakers.
+# LiteLLM still does what it is good at: one OpenAI-compatible surface over many providers, with
+# provider translation, its own key and per-model rpm limits. Adding a cloud provider is one more
+# entry in model_list (its key read from the environment, never written here).
+model_list:
+  - model_name: llama3.2-3b
+    litellm_params:
+      model: ollama_chat/llama3.2:3b
+      api_base: http://127.0.0.1:11434
+      rpm: 120
+  # - model_name: gpt-4o-mini            # a cloud fallback is one entry
+  #   litellm_params:
+  #     model: openai/gpt-4o-mini
+  #     api_key: os.environ/OPENAI_API_KEY
+
+litellm_settings:
+  num_retries: 0
+  request_timeout: 60
+  drop_params: true      # params a provider does not support are dropped, not errors
+  telemetry: false
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

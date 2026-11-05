@@ -27,6 +27,68 @@ from aegis.state import AppState
 API_KEY = "aegis-assistant-key"
 MODEL = "aegis-chat"
 MIN_SIMILARITY = 0.58
+# Hybrid retrieval: BM25 keyword ranking fused with the dense ranking (reciprocal rank fusion,
+# k=60, as in Veritas). A chunk is relevant when its embedding is close enough, or when it is a top
+# keyword match on a rare term ("coalescer" is one word that dense search can rank below a
+# document that merely discusses coalescing). Out-of-scope questions match neither, so the
+# assistant still declines them.
+RRF_K = 60
+BM25_K1, BM25_B = 1.5, 0.75
+# A keyword-only match needs both a strong BM25 score and some semantic closeness: keyword hits
+# alone also fire on off-topic text that happens to share a word (measured: "capital of France"
+# scores 8.4 against a report that quotes that test question).
+BM25_STRONG = 2.5
+DENSE_FLOOR = 0.5
+_TOKEN = re.compile(r"[a-z0-9][a-z0-9_.-]*[a-z0-9]|[a-z0-9]")
+_STOP = frozenset(
+    [
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "does",
+        "do",
+        "for",
+        "from",
+        "how",
+        "i",
+        "in",
+        "is",
+        "it",
+        "of",
+        "on",
+        "or",
+        "the",
+        "this",
+        "to",
+        "was",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "why",
+        "with",
+        "you",
+        "your",
+        "me",
+        "my",
+        "can",
+        "should",
+        "would",
+        "will",
+    ]
+)
+
+
+def _terms(text: str) -> list[str]:
+    return [t for t in _TOKEN.findall(text.lower()) if t not in _STOP]
+
+
 NO_ANSWER = "The project docs don't cover that, so I won't guess."
 SKIP_DOCS = frozenset({"DEMO_SCRIPT.md"})
 RECENT_WINDOW_S = 600
@@ -97,9 +159,14 @@ class DocsIndex:
                 chunks += _split_markdown(rel, text)
         # The YAML and the docs' tables are hard for a 3B model to read correctly, so the numbers
         # and failure behaviours that matter are also stated as plain sentences.
-        chunks.append(
-            Chunk("config/gateway.yaml", "Gateway settings in plain words", settings_facts(self.s))
-        )
+        # one chunk per fact: a long list of facts dilutes each one's embedding, so a specific
+        # question ("which embedding model...?") would not find its line
+        for line in settings_facts(self.s).splitlines():
+            fact = line.lstrip("- ").strip()
+            if fact:
+                chunks.append(
+                    Chunk("config/gateway.yaml", f"Gateway setting: {fact.split(':')[0]}", fact)
+                )
         if openapi:
             lines = [
                 f"{method.upper()} {path}: {op.get('summary') or op.get('description', '')}"
@@ -113,16 +180,61 @@ class DocsIndex:
         self.chunks = chunks
         texts = [f"{c.heading}\n{c.text}" for c in chunks]
         self.vectors = self.s.embedder.embed_sync(texts) if texts else None
+        # BM25 statistics
+        self._docs = [_terms(t) for t in texts]
+        self._avgdl = (sum(map(len, self._docs)) / len(self._docs)) if self._docs else 0.0
+        df: dict[str, int] = {}
+        for doc in self._docs:
+            for term in set(doc):
+                df[term] = df.get(term, 0) + 1
+        n = len(self._docs)
+        self._idf = {t: float(np.log(1 + (n - f + 0.5) / (f + 0.5))) for t, f in df.items()}
         self.built_at = time.time()
         return len(chunks)
 
-    async def search(self, query: str, k: int = 4) -> list[tuple[Chunk, float]]:
+    def bm25(self, query: str) -> np.ndarray:
+        q = _terms(query)
+        scores = np.zeros(len(self._docs), dtype=np.float32)
+        for i, doc in enumerate(self._docs):
+            if not doc:
+                continue
+            tf: dict[str, int] = {}
+            for t in doc:
+                tf[t] = tf.get(t, 0) + 1
+            norm = BM25_K1 * (1 - BM25_B + BM25_B * len(doc) / (self._avgdl or 1))
+            scores[i] = sum(
+                self._idf.get(t, 0.0) * tf[t] * (BM25_K1 + 1) / (tf[t] + norm) for t in q if t in tf
+            )
+        return scores
+
+    async def search(self, query: str, k: int = 4) -> list[tuple[Chunk, float, bool]]:
+        """Top k chunks by reciprocal rank fusion of dense and BM25 rankings, each with its dense
+        similarity and whether it is relevant enough to ground an answer."""
         if self.vectors is None or not self.chunks:
             return []
         q = await self.s.embedder.embed_one(query)
         sims = self.vectors @ q
-        order = np.argsort(-sims)[:k]
-        return [(self.chunks[i], float(sims[i])) for i in order]
+        keyword = self.bm25(query)
+        dense_rank = {int(i): r for r, i in enumerate(np.argsort(-sims))}
+        bm25_rank = {int(i): r for r, i in enumerate(np.argsort(-keyword)) if keyword[i] > 0}
+        fused = {
+            i: 1 / (RRF_K + dense_rank[i]) + (1 / (RRF_K + bm25_rank[i]) if i in bm25_rank else 0)
+            for i in range(len(self.chunks))
+        }
+        order = sorted(fused, key=lambda i: fused[i], reverse=True)[:k]
+        return [
+            (
+                self.chunks[i],
+                float(sims[i]),
+                float(sims[i]) >= MIN_SIMILARITY
+                or (
+                    bm25_rank.get(i, 99) < 2
+                    and float(keyword[i]) >= BM25_STRONG
+                    and float(sims[i]) >= DENSE_FLOOR
+                ),
+            )
+            for i in order
+        ]
 
 
 def settings_facts(state: AppState) -> str:
@@ -144,6 +256,14 @@ def settings_facts(state: AppState) -> str:
             f"- Semantic cache: a cosine similarity of at least {ca.semantic_threshold:g} is a hit; only "
             f"last messages under {ca.semantic_max_tokens} tokens are looked up; entries live "
             f"{ca.ttl_seconds // 3600} hours; a lookup slower than {ca.embed_budget_ms} ms is skipped.",
+            (
+                f"- Embeddings for the semantic cache: {state.settings.embedder_model} (bge-small, "
+                "384 dimensions), computed on the CPU inside the gateway process."
+            ),
+            (
+                "- Coalescer: identical requests in flight at the same moment share one upstream "
+                "call; the first is the leader, the others follow its stream."
+            ),
             "- If Redis is down: the exact and semantic caches are skipped, rate limits fall back to "
             "an in-process token bucket, and health shows degraded; requests are still answered.",
             "- If a backend dies mid-stream: the client gets an SSE error event, tokens are estimated "
@@ -261,16 +381,16 @@ If the context does not contain the answer, reply exactly: "{no_answer}"
 """
 
 
-async def answer(
-    state: AppState, question: str, history: list[dict[str, str]], no_cache: bool = False
-) -> AsyncIterator[dict[str, Any]]:
+async def _retrieve(state: AppState, question: str) -> tuple[list[dict[str, Any]], str, bool]:
+    """The cited sources, the numbered context for the model, and whether live state was added
+    (an empty context means the question is not grounded: the assistant declines)."""
     index: DocsIndex = state.docs_index  # type: ignore[attr-defined]
     hits = await index.search(question, k=4)
-    relevant = [(c, s) for c, s in hits if s >= MIN_SIMILARITY]
+    relevant = [(c, sim) for c, sim, ok in hits if ok]
     wants_live = bool(LIVE_PATTERNS.search(question))
-    sources = [
-        {"n": i + 1, "source": c.source, "heading": c.heading, "score": round(s, 3)}
-        for i, (c, s) in enumerate(relevant)
+    sources: list[dict[str, Any]] = [
+        {"n": i + 1, "source": c.source, "heading": c.heading, "score": round(sim, 3)}
+        for i, (c, sim) in enumerate(relevant)
     ]
     context = "\n\n".join(
         f"[{i + 1}] ({c.source} > {c.heading})\n{c.text}" for i, (c, _) in enumerate(relevant)
@@ -285,7 +405,14 @@ async def answer(
                 "score": None,
             }
         )
-    grounded = bool(relevant) or wants_live
+    return sources, context.strip(), wants_live
+
+
+async def answer(
+    state: AppState, question: str, history: list[dict[str, str]], no_cache: bool = False
+) -> AsyncIterator[dict[str, Any]]:
+    sources, context, wants_live = await _retrieve(state, question)
+    grounded = bool(context)
     yield {"type": "sources", "sources": sources, "grounded": grounded}
 
     if grounded:

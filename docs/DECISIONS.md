@@ -2,22 +2,43 @@
 
 Each entry: what was decided, why, and what was rejected.
 
-## The core path uses raw httpx, not LiteLLM
+## The core path uses raw httpx; LiteLLM is a backend, twice
 
 The point of this gateway is to show failover, hedging, breakers and caching working. LiteLLM's
 router has its own retries, fallbacks and cooldowns; letting it own the path would hide exactly the
-behaviour the demo exists to show, and two retry layers would fight each other. LiteLLM is still
-demonstrated: it is one optional backend (`litellm-ollama` in the YAML, `uv sync --extra litellm`,
-pinned version) inside a chain, so AEGIS's slots, breakers and hedging wrap it like any backend.
+behaviour the demo exists to show, and two retry layers would multiply attempts. So AEGIS owns
+reliability and LiteLLM appears where it is strongest, provider translation, in two forms:
+- **the real LiteLLM proxy server** (`litellm --config infra/litellm/config.yaml` on :4000),
+  model `aegis-litellm-proxy`. Its `num_retries` is 0; its master key comes from the
+  environment (`api_key_env`), never the YAML. Adding a cloud provider is one `model_list` entry.
+- **the LiteLLM SDK** inside the gateway process (`kind: litellm`), model `aegis-litellm`.
 
-## Jaeger with OpenTelemetry, not a self-hosted Langfuse
+Both run inside AEGIS chains, so slots, breakers and hedging wrap them like any backend. LiteLLM
+is pinned to 1.80.0 (see below) and runs in its own environment (`make setup-serving`).
 
-Self-hosted Langfuse v3 needs Postgres, ClickHouse, Redis and MinIO; on a 16 GB Mac already running
-two local models that is the difference between fitting and swapping. Jaeger all-in-one is one
-container (about 50 MB resident here). The export is standard OTLP over HTTP with the official
-`gen_ai.*` semantic conventions, which Langfuse ingests natively through its OTLP endpoint
-(`/api/public/otel`), so pointing `AEGIS_OTLP_ENDPOINT` at a Langfuse instance is a configuration
-change, not a code change.
+## Langfuse and Jaeger from one OTLP export
+
+Spans go to Jaeger always and to Langfuse when `AEGIS_LANGFUSE_PUBLIC_KEY`/`SECRET_KEY` are set:
+one OTLP/HTTP exporter each (Langfuse's endpoint is `{host}/api/public/otel` with Basic auth), so a
+slow Langfuse never delays Jaeger. No SDK: the spans carry Langfuse's own attributes
+(`langfuse.trace.name`, `langfuse.user.id` = tenant, tags, `langfuse.observation.type`), so the
+model call arrives as a `generation` with model, usage and estimated cost, and the request root as
+a plain span, so usage is counted once.
+
+Self-hosted Langfuse v4 needs Postgres, ClickHouse, Redis and MinIO, about 3-4 GB, which does not
+fit permanently beside three local models on 16 GB. So it is an optional stack
+(`infra/langfuse/docker-compose.yml`, pinned 4.67.0, headless init, `make langfuse-up`), verified
+end to end on 2026-11-05 (screenshots in docs/evidence/), and Jaeger stays the always-on viewer.
+Prompt and answer text is never exported to either; traces carry counts.
+
+## vLLM on a Mac: the real engine through vllm-metal
+
+vLLM is built for NVIDIA GPUs, but the official vllm-metal plugin runs its V1 engine on Apple
+Silicon with MLX doing the maths (paged attention, chunked prefill, continuous batching). It is a
+real `vllm serve` on :8090 with a 0.5B model, so it fits beside the 3B MLX primary and the 3B
+Ollama fallback; its backend has 8 slots because continuous batching lets many requests share a
+forward pass (the MLX server has 1). Pinned wheels (vLLM 0.32.0, vllm-metal 0.32.0, two weeks old
+at pinning) in their own environment. A GPU box would be one more YAML entry (`vllm-gpu`).
 
 ## The three corrections to the tournament design
 
@@ -156,3 +177,137 @@ the gateway runs normally.
 Times use `en-GB` (24-hour) and counts use `en-US` grouping everywhere, instead of the visitor's
 locale. Demo screenshots, the docs and the narrated scenarios then read the same on any machine.
 This is a deliberate exception to the Web Interface Guidelines' "use the browser locale" rule.
+
+## Secure by default, convenient in dev
+
+The Week 3 review flagged `AUTH_ENABLED` defaulting to false. Here the default is the safe one:
+`AEGIS_ENV=production` unless set. Production requires an admin credential for the control plane,
+refuses chaos even if the flag is on, and never trusts loopback (behind a reverse proxy everyone
+looks local). Dev mode is an explicit opt-in that `scripts/dev.sh` makes, and the gateway logs a
+warning when it is on. Rejected: a separate `AUTH_ENABLED` switch (one more way to be insecure)
+and a login flow for the demo site (friction with no security gain on one laptop).
+
+## Public key ids instead of keys
+
+Before, the raw key was the ledger column, the Redis bucket name, the event field and the
+`/api/tenants` value, and `/api/config` returned every key and backend credential. Now a key has
+a public `id`; the key itself never leaves `security.py`. Existing ledgers are migrated in place.
+Keys can be stored as `sha256:` entries, compared in constant time across every entry.
+
+## Llama Guard: thresholded, leader-only, output before caching
+
+Llama Guard 3 1B (~110-150 ms warm) labelled "How do I kill a Python process?" unsafe. Its own
+probability of the `unsafe` token separates the cases: false positives 0.50-0.69, real hazards
+0.986-1.0 (measured on this Mac). So a prompt is blocked only at P(unsafe) >= 0.9 and a borderline
+verdict is allowed and recorded, as the Llama Guard paper suggests. It runs only on a cache miss
+and only for the coalescing leader (ten identical requests cost one check), and the output check
+runs in the background before the cache write, so an unsafe answer is never replayed and no client
+waits for it. Rejected: the 8B model (does not fit), checking output before streaming (it would
+remove streaming).
+
+## Output redaction by regex, with a hold-back buffer
+
+A model can write PII it was never given. Presidio per token would cost milliseconds hundreds of
+times per answer, so the output guard uses precise patterns for structured values (emails, phone
+formats, Luhn-valid cards, known secret formats) and holds back the last word, and any trailing
+run of number-like words, until it is complete, so a value split across chunks is still caught.
+
+## A chain retry only when every backend failed
+
+Retrying an open breaker cannot help, and retrying in front of a busy backend adds load. So the
+gateway retries the whole chain once, after a full-jitter backoff (0-200 ms), only when every
+backend actually failed, and never past the queue deadline. Retries are counted in Prometheus.
+
+## Prometheus from the event bus
+
+The exporter subscribes to the same lifecycle events as the website, so a Grafana panel and the
+Control Room cannot disagree. Labels are bounded (model, backend, cache, status, tenant); request
+and trace ids never become labels. Gauges that describe the present (breaker state, slots) are
+read at scrape time.
+
+## An evaluation gate for a gateway
+
+A gateway writes no answers, so faithfulness is not its metric; its judgements are. Each judgement
+has a labelled golden set scored against the real component with a pass threshold, run with the
+test suite so CI fails on a regression. The semantic cache gate is exact (precision 1.0), because a
+wrong hit serves another question's answer; a missed paraphrase only costs one model call. The
+first run found three injection framings the regex missed; a held-out set written afterwards keeps
+the claim honest.
+
+## WebSocket chat beside SSE
+
+SSE stays the OpenAI-compatible default. `/v1/ws/chat` adds what SSE cannot do: the client can
+cancel a generation mid-stream, which cancels the upstream call and frees its slot, and many
+requests share one connection. Same pipeline, same guardrails, same traces.
+
+## Code health is enforced, not hoped for
+
+- **Complexity at most 12** (ruff C90 in CI and pre-commit). The request path is one short method
+  that names each stage (`Pipeline._run`); the router's race to a first token is a small object,
+  `_Race`, with one method per step (it was a 180-line closure at complexity 28).
+- **Strict typing**: every function typed, no `Any` leaking out of a typed function, no implicit
+  re-exports (`disallow_untyped_defs`, `warn_return_any`...), and `strict` TypeScript.
+- **Property-based tests** (Hypothesis) state the invariants the riskiest code must keep: the
+  streaming redactor equals whole-text redaction under any chunking, backoff stays in its window,
+  cache keys never collide across tenants or parameters. They found three real bugs.
+- **Pre-commit** runs the same checks locally as CI.
+
+## Embedding in batches of 16
+
+The docs index embedded every chunk in one fastembed call (default batch 256): a 1.49 GB peak at
+startup, which a 2 GB container did not survive. Batches of 16 peak at 444 MB and take 6.5 s for
+300 chunks, at startup only.
+
+## The breaker trips on a failure rate too
+
+Three consecutive errors catch a dead backend fast, but a backend failing every other request
+never makes three in a row. So the breaker also trips when at least half of the last 30 seconds
+of requests failed, once there are at least 10 (the rule the course describes). The window is
+cleared when the breaker opens, so recovery starts from a clean slate.
+
+## User feedback as Langfuse scores
+
+A rating is worth most next to the trace it judges: `POST /v1/feedback` stores it (tenant-scoped,
+one vote per request, changeable), counts it in Prometheus, and sends it to Langfuse's scores API
+as `user-feedback` on that request's trace, so quality can be cut by model, backend and cache
+outcome beside latency and cost. Langfuse being away never fails the vote.
+
+## Short-lived JWTs beside API keys
+
+Browsers and mobile apps should not hold a long-lived key. `POST /v1/auth/token` trades a key for
+an HS256 token (15 min by default) naming the key's id, tenant and role. Rejected: RS256 and a
+JWKS endpoint (one gateway signs and verifies its own tokens, so a shared secret is enough) and
+refresh tokens (re-exchanging the key is simpler). The token is checked against the live YAML, so
+removing a key revokes its tokens without a deny list.
+
+## Hybrid retrieval for the assistant
+
+The assistant's evaluation found dense search ranking a document that merely mentions coalescing
+above the README section that defines the coalescer. BM25 ranks that section first, so the two
+rankings are fused with reciprocal rank fusion (k=60, as in Veritas). A keyword-only match must
+also be semantically close (cosine >= 0.5): measured, "What is the capital of France?" scores 8.4
+in BM25 against a report that quotes that question. The plain-words settings are indexed one fact
+per chunk, so a specific question finds its line. Retrieval, answer accuracy and abstention are
+all 1.0 on the 13-question set.
+
+## MLX gets 4 slots, from a measurement
+
+The MLX backend had 1 slot because older mlx-lm served one request at a time. mlx-lm 0.32 batches
+(`--decode-concurrency`, default 32), and `make bench-serving` shows its throughput growing x3.5
+up to 4 concurrent requests and flattening after, so 4 slots it is. The load test went from 8.5 to
+18.4 req/s and its p95 from 6.8 s to 2.5 s.
+
+## Kubernetes: one replica, said plainly
+
+`deploy/k8s` runs the gateway at the `restricted` pod security level with a startup probe (the
+embedder and the docs index load at start), liveness on `/healthz` and readiness on `/readyz`, so
+a pod whose backends are all down leaves the load balancer instead of failing requests. One
+replica with a volume and the `Recreate` strategy, because the ledger is SQLite and coalescing is
+in-process; an HPA on top would split the ledger across pods. The scaling path (Postgres ledger,
+Redis singleflight) is in PRODUCTION_READINESS.md.
+
+## Compatibility proven with the OpenAI SDK
+
+Raw HTTP tests show the wire format; `tests/test_openai_sdk.py` shows the promise: the official
+`openai` client, pointed at the gateway with two settings, streams, receives tool calls, lists
+models and raises its own typed errors (`AuthenticationError`, `RateLimitError`...).

@@ -8,6 +8,7 @@ here, in the open.
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -24,7 +25,7 @@ class OpenAICompatBackend:
         self.provider = cfg.provider
         self.upstream_model = cfg.model
         self.base_url = cfg.base_url.rstrip("/")
-        self.api_key = cfg.api_key
+        self.api_key = (os.environ.get(cfg.api_key_env) if cfg.api_key_env else None) or cfg.api_key
         self._client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(connect=2.0, read=60.0, write=10.0, pool=5.0),
             limits=httpx.Limits(max_connections=32, max_keepalive_connections=8),

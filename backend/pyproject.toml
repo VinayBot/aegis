@@ -1,6 +1,6 @@
 [project]
 name = "aegis"
-version = "1.0.0"
+version = "1.1.0"
 description = "AEGIS: an AI gateway with semantic caching, failover, hedging and live observability"
 requires-python = ">=3.12,<3.13"
 dependencies = [
@@ -22,6 +22,8 @@ dependencies = [
   "psutil>=6.1",
   # Presidio NER model (12 MB), pinned to the official release wheel.
   "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+  "prometheus-client>=0.21",
+  "pyjwt>=2.9",
 ]
 
 [project.optional-dependencies]
@@ -37,6 +39,10 @@ dev = [
   "types-pyyaml",
   "types-psutil",
   "websockets>=13",
+  "pytest-cov>=6.0",
+  "pip-audit>=2.7",
+  "hypothesis>=6.112",
+  "openai>=1.50",
 ]
 
 [build-system]
@@ -54,8 +60,12 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "ASYNC", "SIM", "RUF"]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "SIM", "RUF", "C90"]
 ignore = ["RUF001", "RUF002", "RUF003", "B008", "E501", "ASYNC109"]
+
+[tool.ruff.lint.mccabe]
+# kept low on purpose: the request path reads as one small method per stage
+max-complexity = 12
 
 [tool.ruff.lint.per-file-ignores]
 # Integration tests launch and poll real processes on purpose.
@@ -66,7 +76,13 @@ python_version = "3.12"
 ignore_missing_imports = true
 check_untyped_defs = true
 warn_unused_ignores = true
-packages = ["aegis"]
+# every function typed, nothing Any-typed leaking out of a typed function
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+warn_return_any = true
+no_implicit_reexport = true
+strict_equality = true
+packages = ["aegis", "evals"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

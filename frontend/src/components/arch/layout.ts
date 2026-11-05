@@ -9,6 +9,8 @@ export type View = "overview" | "detailed";
 const COL = 225;
 const ROW = 170;
 
+// In along the top (row 0), back along row 1 through memory, safety and the reflexes, down to
+// the models (row 2, columns 1-5), out through the relay (column 0). Side systems sit on row 3.
 const DETAILED: Record<string, [number, number]> = {
   client: [0, ROW],
   auth: [COL, 0],
@@ -17,14 +19,15 @@ const DETAILED: Record<string, [number, number]> = {
   budget: [4 * COL, 0],
   exact_cache: [5 * COL, 0],
   semantic_cache: [5 * COL, ROW],
-  embedder: [5 * COL, 2 * ROW],
+  embedder: [6 * COL, ROW],
   coalescer: [4 * COL, ROW],
-  router: [3 * COL, ROW],
-  hedger: [2 * COL, ROW],
-  relay: [COL, 2 * ROW],
+  safety: [3 * COL, ROW],
+  router: [2 * COL, ROW],
+  hedger: [COL, ROW],
+  relay: [0, 2 * ROW],
   ledger_queue: [COL, 3 * ROW],
   sqlite: [2 * COL, 3 * ROW],
-  redis: [5 * COL, 3 * ROW],
+  redis: [6 * COL, 2 * ROW],
   otel: [0, 3 * ROW],
   chaos: [4 * COL, 3 * ROW],
 };
@@ -39,6 +42,7 @@ export const GROUP_OF: Record<string, string> = {
   semantic_cache: "Memory",
   embedder: "Memory",
   coalescer: "Memory",
+  safety: "Reflexes",
   router: "Reflexes",
   hedger: "Reflexes",
   relay: "Delivery",
@@ -64,15 +68,18 @@ export function groupOf(id: string): string {
 
 export function positionNodes(nodes: ArchNode[]): Record<string, [number, number]> {
   const pos: Record<string, [number, number]> = {};
+  // models fill row 2 from column 1 (under the hedger) to column 5; more than five wrap to a
+  // second row, so a long YAML chain never lands on the relay or another node
   const backends = nodes.filter((n) => n.kind === "backend");
   backends.forEach((n, i) => {
-    pos[n.id] = [3 * COL + (i - (backends.length - 1) / 2) * COL, 2 * ROW];
+    const row = Math.floor(i / 5);
+    pos[n.id] = [(1 + (i % 5)) * COL, (2 + row * 2.6) * ROW];
   });
   let extra = 0;
   for (const n of nodes) {
     if (pos[n.id]) continue;
     if (DETAILED[n.id]) pos[n.id] = DETAILED[n.id];
-    else pos[n.id] = [(5 + extra++) * COL, 3 * ROW];
+    else pos[n.id] = [(5 + extra++) * COL, 3 * ROW + (backends.length > 5 ? 2.6 * ROW : 0)];
   }
   return pos;
 }

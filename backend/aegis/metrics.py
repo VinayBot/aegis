@@ -128,7 +128,7 @@ class Metrics:
             b.coalesced += 1
         b.tokens_in += int(e.get("tokens_in") or 0)
         b.tokens_out += int(e.get("tokens_out") or 0)
-        b.tokens_by_key[e.get("api_key") or "?"] += int(e.get("tokens_in") or 0) + int(
+        b.tokens_by_key[e.get("key_id") or "?"] += int(e.get("tokens_in") or 0) + int(
             e.get("tokens_out") or 0
         )
         b.saved += float(e.get("saved_est_usd") or 0.0)

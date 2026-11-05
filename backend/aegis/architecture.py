@@ -7,6 +7,7 @@ from __future__ import annotations
 import itertools
 from typing import Any
 
+from aegis.config import GatewayConfig
 from aegis.state import AppState
 
 SOURCE = "backend/aegis"
@@ -86,6 +87,15 @@ PIPELINE: list[tuple[str, str, str, str, str, str]] = [
         "Identical requests in flight at once share one upstream call.",
     ),
     (
+        "safety",
+        "Content safety",
+        "Reflexes",
+        "stage",
+        "guardrails/safety.py",
+        "Llama Guard 3 checks the prompt on a cache miss (and the answer before it is cached); "
+        "blocks only when P(unsafe) >= the threshold.",
+    ),
+    (
         "router",
         "Router",
         "Reflexes",
@@ -152,104 +162,114 @@ SIDE = [
 GROUPS = ["Ingress", "Policy", "Memory", "Reflexes", "Backends", "Delivery"]
 
 
+def _stage_status(state: AppState, node_id: str) -> str:
+    status = "up"
+    if node_id in ("exact_cache", "semantic_cache", "ratelimit", "budget") and not state.redis_ok:
+        status = "degraded"
+    if node_id == "semantic_cache" and not state.embedder.loaded:
+        status = "degraded"
+    if node_id == "sqlite":
+        status = (state.health.get("sqlite") or {}).get("status", "unknown")
+    return str(status)
+
+
+def _pipeline_nodes(state: AppState) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": node_id,
+            "label": label,
+            "group": group,
+            "kind": kind,
+            "status": _stage_status(state, node_id),
+            "about": about,
+            "source": f"{SOURCE}/{source}",
+            "stats": state.metrics.stage_stats(node_id),
+        }
+        for node_id, label, group, kind, source, about in PIPELINE
+    ]
+
+
+def _backend_node(state: AppState, cfg: GatewayConfig, name: str) -> dict[str, Any]:
+    health = state.health
+    b = cfg.backends[name]
+    rt = state.router.runtimes.get(name)
+    h = health.get(f"backend:{name}") or {}
+    breaker = rt.breaker.current_state() if rt else "closed"
+    return {
+        "id": f"backend:{name}",
+        "label": b.label,
+        "group": "Backends",
+        "kind": "backend",
+        "status": h.get("status", "unknown"),
+        "about": f"{b.provider} serving {b.model} at {b.base_url or b.api_base}",
+        "source": f"{SOURCE}/backends/{'litellm_adapter' if b.kind == 'litellm' else 'openai_compat'}.py",
+        "config": {
+            "kind": b.kind,
+            "base_url": b.base_url or b.api_base,
+            "model": b.model,
+            "slots": b.slots,
+            "defaults": b.defaults,
+            "chains": [mn for mn, mc in cfg.models.items() if name in mc.chain],
+        },
+        "breaker": {
+            "state": breaker,
+            "retry_after_s": round(rt.breaker.retry_after(), 1) if rt else 0,
+            "open_seconds": cfg.breaker.open_seconds,
+            "trips": rt.breaker.trips if rt else 0,
+            # the share of failures in the breaker's rolling window (trips at >= 50%)
+            "window_failure_rate": rt.breaker.window_failure_rate() if rt else None,
+            "failure_rate_threshold": cfg.breaker.failure_rate,
+        },
+        "slots": {"capacity": rt.capacity, "in_flight": rt.in_flight} if rt else None,
+        "stats": {
+            "ttft_p50_ms": _r(rt.p(0.5)) if rt else None,
+            "ttft_p95_ms": _r(rt.p(0.95)) if rt else None,
+            "hedge_after_ms": _r(state.router.hedge_delay_ms(rt, cfg)) if rt else None,
+            **(rt.counters if rt else {}),
+        },
+    }
+
+
+def _side_nodes(state: AppState) -> list[dict[str, Any]]:
+    def status_of(component: str) -> str:
+        return str((state.health.get(component) or {}).get("status", "unknown"))
+
+    return [
+        {
+            "id": node_id,
+            "label": label,
+            "group": "Side systems",
+            "kind": kind,
+            "status": {"redis": status_of("redis"), "otel": status_of("jaeger")}.get(
+                node_id, "up" if state.chaos.enabled else "disabled"
+            ),
+            "about": about,
+            "source": f"{SOURCE}/{source}",
+            "stats": {},
+        }
+        for node_id, label, kind, source, about in SIDE
+    ]
+
+
 def build(state: AppState) -> dict[str, Any]:
     cfg = state.config.get()
-    m = state.metrics
-    health = state.health
-    nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
-
-    def status_of(component: str) -> str:
-        return (health.get(component) or {}).get("status", "unknown")
-
-    for node_id, label, group, kind, source, about in PIPELINE:
-        status = "up"
-        if (
-            node_id in ("exact_cache", "semantic_cache", "ratelimit", "budget")
-            and not state.redis_ok
-        ):
-            status = "degraded"
-        if node_id == "semantic_cache" and not state.embedder.loaded:
-            status = "degraded"
-        if node_id == "sqlite":
-            status = status_of("sqlite")
-        nodes.append(
-            {
-                "id": node_id,
-                "label": label,
-                "group": group,
-                "kind": kind,
-                "status": status,
-                "about": about,
-                "source": f"{SOURCE}/{source}",
-                "stats": m.stage_stats(node_id),
-            }
-        )
-
-    seen: set[str] = set()
-    for model in cfg.models.values():
-        for name in model.chain:
-            if name in seen:
-                continue
-            seen.add(name)
-            b = cfg.backends[name]
-            rt = state.router.runtimes.get(name)
-            h = health.get(f"backend:{name}") or {}
-            breaker = rt.breaker.current_state() if rt else "closed"
-            nodes.append(
-                {
-                    "id": f"backend:{name}",
-                    "label": b.label,
-                    "group": "Backends",
-                    "kind": "backend",
-                    "status": h.get("status", "unknown"),
-                    "about": f"{b.provider} serving {b.model} at {b.base_url or b.api_base}",
-                    "source": f"{SOURCE}/backends/{'litellm_adapter' if b.kind == 'litellm' else 'openai_compat'}.py",
-                    "config": {
-                        "kind": b.kind,
-                        "base_url": b.base_url or b.api_base,
-                        "model": b.model,
-                        "slots": b.slots,
-                        "defaults": b.defaults,
-                        "chains": [mn for mn, mc in cfg.models.items() if name in mc.chain],
-                    },
-                    "breaker": {
-                        "state": breaker,
-                        "retry_after_s": round(rt.breaker.retry_after(), 1) if rt else 0,
-                        "open_seconds": cfg.breaker.open_seconds,
-                        "trips": rt.breaker.trips if rt else 0,
-                    },
-                    "slots": {"capacity": rt.capacity, "in_flight": rt.in_flight} if rt else None,
-                    "stats": {
-                        "ttft_p50_ms": _r(rt.p(0.5)) if rt else None,
-                        "ttft_p95_ms": _r(rt.p(0.95)) if rt else None,
-                        "hedge_after_ms": _r(state.router.hedge_delay_ms(rt, cfg)) if rt else None,
-                        **(rt.counters if rt else {}),
-                    },
-                }
-            )
-
-    for node_id, label, kind, source, about in SIDE:
-        status = {"redis": status_of("redis"), "otel": status_of("jaeger")}.get(
-            node_id, "up" if state.chaos.enabled else "disabled"
-        )
-        nodes.append(
-            {
-                "id": node_id,
-                "label": label,
-                "group": "Side systems",
-                "kind": kind,
-                "status": status,
-                "about": about,
-                "source": f"{SOURCE}/{source}",
-                "stats": {},
-            }
-        )
+    # every backend any model chains to, once, in chain order
+    seen = list(dict.fromkeys(name for model in cfg.models.values() for name in model.chain))
+    nodes = [
+        *_pipeline_nodes(state),
+        *(_backend_node(state, cfg, name) for name in seen),
+        *_side_nodes(state),
+    ]
 
     stage_configs = {
-        "ratelimit": {"keys": {k: {"tenant": v.tenant, "tpm": v.tpm} for k, v in cfg.keys.items()}},
+        # keys by their public id: the raw key never leaves aegis.security
+        "ratelimit": {
+            "keys": {v.id: {"tenant": v.tenant, "tpm": v.tpm} for v in cfg.keys.values()}
+        },
         "budget": {"tenants": {v.tenant: v.budget.model_dump() for v in cfg.keys.values()}},
         "exact_cache": {"ttl_seconds": cfg.cache.ttl_seconds},
+        "safety": cfg.safety.model_dump(),
         "semantic_cache": {
             "threshold": cfg.cache.semantic_threshold,
             "max_tokens": cfg.cache.semantic_max_tokens,
@@ -285,6 +305,7 @@ def build(state: AppState) -> dict[str, Any]:
         "exact_cache",
         "semantic_cache",
         "coalescer",
+        "safety",
         "router",
         "hedger",
     ]

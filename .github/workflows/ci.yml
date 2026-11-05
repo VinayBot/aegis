@@ -1,0 +1,103 @@
+# Everything that does not need a local LLM: lint, types, the full backend suite (fake model
+# servers, real Redis Stack), the evaluation gate, dependency audits, the frontend, and the
+# production image with a smoke test. Live-model checks (e2e, Llama Guard evals) run on the Mac
+# with `make dev`, because the models are local by design.
+name: ci
+on: [push, pull_request]
+permissions: { contents: read }
+concurrency: { group: "ci-${{ github.ref }}", cancel-in-progress: true }
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    services:
+      redis:
+        image: redis/redis-stack-server:7.4.0-v3
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      FASTEMBED_CACHE_PATH: /home/runner/.cache/fastembed
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/cache@v4
+        with: { path: /home/runner/.cache/fastembed, key: fastembed-bge-small-en-v1.5 }
+      - run: uv sync --frozen
+      - run: uv run ruff check . && uv run ruff format --check .
+      - run: uv run mypy
+      - name: tests (unit, HTTP integration, SIGSTOP, eval gate) with a coverage floor
+        run: uv run pytest -q --cov=aegis --cov-report=term-missing:skip-covered --cov-fail-under=85
+      - name: evaluation report
+        run: uv run python -m evals.run --report eval-report.json
+      - uses: actions/upload-artifact@v4
+        with: { name: eval-report, path: backend/eval-report.json }
+      - name: audit Python dependencies (pip-audit)
+        run: |
+          uv export --frozen --no-dev --no-hashes --no-emit-project -o /tmp/req.txt
+          uv run pip-audit -r /tmp/req.txt --no-deps --disable-pip
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: frontend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint && npm run typecheck && npm test
+      - run: npm run build
+      - run: npm audit --omit=dev --audit-level=high
+
+  alerts:
+    # The Prometheus alerting rules: valid, and firing (or not) as their unit tests expect.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: promtool check + test
+        run: |
+          docker run --rm -v "$PWD/infra/prometheus":/r -w /r --entrypoint promtool \
+            prom/prometheus:v2.55.1 check rules alerts.yml
+          docker run --rm -v "$PWD/infra/prometheus":/r -w /r --entrypoint promtool \
+            prom/prometheus:v2.55.1 test rules alerts_test.yml
+
+  k8s:
+    # The Kubernetes manifests render with kustomize and validate strictly against the schemas.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: kustomize build + kubeconform
+        run: |
+          docker run --rm -v "$PWD/deploy/k8s":/k -w /k registry.k8s.io/kustomize/kustomize:v5.4.3 build . > /tmp/rendered.yaml
+          docker run --rm -v /tmp:/t ghcr.io/yannh/kubeconform:v0.6.7 -strict -summary /t/rendered.yaml
+
+  image:
+    # The production image: build it, run it with no model servers at all, and check that it is
+    # alive, honestly not ready, and secure by default (control plane refuses an anonymous caller).
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with: { context: ., load: true, tags: "aegis-gateway:ci", cache-from: type=gha, cache-to: "type=gha,mode=max" }
+      - name: smoke test
+        run: |
+          docker run -d --name aegis -p 8000:8000 aegis-gateway:ci
+          for i in $(seq 1 60); do curl -fs http://127.0.0.1:8000/healthz && break; sleep 2; done
+          curl -fs http://127.0.0.1:8000/healthz | grep -q alive
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/readyz)" = 503   # no models here
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/architecture)" = 401
+          # the repo's demo keys are public: production must not accept them
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'authorization: Bearer aegis-demo-key' -H 'content-type: application/json' -d '{"messages":[{"role":"user","content":"hi"}]}' http://127.0.0.1:8000/v1/chat/completions)" = 401
+          test "$(docker exec aegis id -u)" = 10001                                               # not root
+          docker logs aegis 2>&1 | head -5 | grep -q '"level"'                                    # JSON logs
+      - if: always()
+        run: docker logs aegis 2>&1 | tail -40
+      - name: SBOM of the image (SPDX)
+        uses: anchore/sbom-action@v0
+        with: {image: "aegis-gateway:ci", format: spdx-json, output-file: sbom.spdx.json, upload-artifact: true}
+      - name: vulnerability report (Trivy, report only; fixed upstream CVEs are bumped by Dependabot)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with: {image-ref: "aegis-gateway:ci", severity: "CRITICAL,HIGH", ignore-unfixed: true, exit-code: "0", format: table}

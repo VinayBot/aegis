@@ -30,10 +30,89 @@ class FakeControl:
     tokens: int = 5
     fail_after: int | None = None  # drop the stream after this many tokens
     text: str = "pong"
+    fail_times: int = 0  # answer 503 to this many calls, then recover (transient blip)
+    # when the request carries `tools`, answer with this tool call, streamed in OpenAI's format
+    tool_call: dict[str, Any] | None = None
     calls: int = 0
     cancelled: int = 0
     completed: int = 0
     requests: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _frame(control: FakeControl, delta: dict[str, Any], finish: str | None = None) -> str:
+    chunk = {
+        "id": "fake",
+        "object": "chat.completion.chunk",
+        "model": control.model,
+        "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+    }
+    return f"data: {json.dumps(chunk)}\n\n"
+
+
+async def _tool_stream(control: FakeControl) -> Any:
+    assert control.tool_call is not None
+    name, args = control.tool_call["name"], json.dumps(control.tool_call["arguments"])
+    yield _frame(
+        control,
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "index": 0,
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": name, "arguments": ""},
+                }
+            ],
+        },
+    )
+    for i in range(0, len(args), 8):  # arguments arrive in fragments, as real servers send them
+        yield _frame(
+            control, {"tool_calls": [{"index": 0, "function": {"arguments": args[i : i + 8]}}]}
+        )
+    yield _frame(control, {}, "tool_calls")
+    usage = {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30}
+    yield f"data: {json.dumps({'id': 'fake', 'choices': [], 'usage': usage})}\n\n"
+    yield "data: [DONE]\n\n"
+    control.completed += 1
+
+
+@dataclass
+class GuardControl:
+    """A fake Llama Guard: one verdict for prompts, one for (prompt, answer) pairs."""
+
+    input_verdict: str = "safe"
+    output_verdict: str = "safe"
+    p_unsafe: float | None = None  # when set, send OpenAI-style logprobs for the first token
+    status: int = 200
+    delay: float = 0.0
+    calls: int = 0
+    seen: list[list[dict[str, Any]]] = field(default_factory=list)
+
+
+def build_guard_app(control: GuardControl) -> Starlette:
+    async def chat(request: Request) -> JSONResponse:
+        body = await request.json()
+        control.calls += 1
+        control.seen.append(body["messages"])
+        await asyncio.sleep(control.delay)
+        if control.status != 200:
+            return JSONResponse({"error": {"message": "guard down"}}, control.status)
+        is_output = body["messages"][-1]["role"] == "assistant"
+        verdict = control.output_verdict if is_output else control.input_verdict
+        choice: dict[str, Any] = {"index": 0, "message": {"role": "assistant", "content": verdict}}
+        if control.p_unsafe is not None:
+            import math
+
+            p = control.p_unsafe
+            tops = [
+                {"token": "unsafe", "logprob": math.log(max(p, 1e-9))},
+                {"token": "safe", "logprob": math.log(max(1 - p, 1e-9))},
+            ]
+            choice["logprobs"] = {"content": [{"token": verdict.split()[0], "top_logprobs": tops}]}
+        return JSONResponse({"choices": [choice]})
+
+    return Starlette(routes=[Route("/v1/chat/completions", chat, methods=["POST"])])
 
 
 def build_app(control: FakeControl) -> Starlette:
@@ -48,6 +127,11 @@ def build_app(control: FakeControl) -> Starlette:
             return JSONResponse({"error": {"message": f"model {body.get('model')} not found"}}, 404)
         if control.status != 200:
             return JSONResponse({"error": {"message": "fake failure"}}, control.status)
+        if control.fail_times > 0:
+            control.fail_times -= 1
+            return JSONResponse({"error": {"message": "transient fake failure"}}, 503)
+        if control.tool_call is not None and body.get("tools"):
+            return StreamingResponse(_tool_stream(control), media_type="text/event-stream")
 
         async def stream() -> Any:
             try:

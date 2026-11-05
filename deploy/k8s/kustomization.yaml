@@ -1,0 +1,13 @@
+# 1. kubectl -n aegis create secret generic aegis-secrets ...      (see secret.example.yaml)
+# 2. kubectl -n aegis create configmap aegis-gateway-yaml \
+#      --from-file=gateway.yaml=backend/config/gateway.yaml          (keys as sha256: entries)
+# 3. kubectl apply -k deploy/k8s
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: aegis
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
+  - networkpolicy.yaml

@@ -10,16 +10,37 @@ import { useLive } from "../lib/live";
 import { TiltedGridHero } from "@/components/ui/tilted-grid-hero";
 
 // The page's h1 is the reel's title, so each document's own title renders as an h2. Links between
-// the markdown files (docs/API.md, ../README.md, #anchors kept) open in this page; others leave.
-const DOC_COMPONENTS: Components = {
-  h1: ({ children }) => <h2 className="doc-title">{children}</h2>,
-  a: ({ href = "", children }) => {
-    const md = /^(?![a-z]+:)(?:[^#]*\/)?([^/#]+\.md)(#.*)?$/i.exec(href);
-    if (md) return <Link to={`/docs/${md[1]}${md[2] ?? ""}`}>{children}</Link>;
-    const external = /^[a-z]+:/i.test(href);
-    return <a href={href} {...(external ? { target: "_blank", rel: "noreferrer" } : {})}>{children}</a>;
-  },
-};
+// the markdown files (docs/API.md, ../README.md, #anchors kept) open in this page; links to source
+// files, configs and evidence open the file on GitHub, resolved from the document's own folder.
+const REPO = "https://github.com/VinayBot/aegis/blob/main/";
+const ROOT_DOCS = new Set(["README.md", "DESIGN.md", "LEARNING.md", "SECURITY.md", "CHANGELOG.md", "CONTRIBUTING.md"]);
+
+export function repoUrl(href: string, docSlug: string): string {
+  const parts = (ROOT_DOCS.has(docSlug) ? [] : ["docs"]).concat(href.split("/"));
+  const out: string[] = [];
+  for (const p of parts) {
+    if (p === "..") out.pop();
+    else if (p && p !== ".") out.push(p);
+  }
+  return REPO + out.join("/");
+}
+
+function docComponents(docSlug: string): Components {
+  return {
+    h1: ({ children }) => <h2 className="doc-title">{children}</h2>,
+    // remote images (the README's CI badges) are for GitHub; the site loads nothing third-party
+    img: ({ src = "", alt = "" }) =>
+      /^[a-z]+:/i.test(String(src)) ? <span className="text-xs text-ink-mute">{alt} status</span> : <img src={String(src)} alt={alt} />,
+    a: ({ href = "", children }) => {
+      const md = /^(?![a-z]+:)(?:[^#]*\/)?([^/#]+\.md)(#.*)?$/i.exec(href);
+      if (md) return <Link to={`/docs/${md[1]}${md[2] ?? ""}`}>{children}</Link>;
+      if (href.startsWith("#")) return <a href={href}>{children}</a>;
+      const external = /^[a-z]+:/i.test(href);
+      const target = external ? href : repoUrl(href, docSlug);
+      return <a href={target} target="_blank" rel="noreferrer">{children}</a>;
+    },
+  };
+}
 
 const REEL = ["architecture", "control-room", "chaos", "playground", "traces", "assistant", "home", "docs"].map((n) => ({ src: `/assets/screens/${n}-800.webp`, alt: "" }));
 
@@ -70,7 +91,7 @@ export default function Docs() {
         {mode !== "live" && <p className="text-amber">The docs are served by the gateway; start it to read them here, or open the docs/ folder.</p>}
         {error && <p role="alert" className="text-red">{error}</p>}
         {markdown === null && mode === "live" && !error && <p aria-busy="true">Loading…</p>}
-        {markdown && <ReactMarkdown remarkPlugins={[remarkGfm]} components={DOC_COMPONENTS}>{markdown}</ReactMarkdown>}
+        {markdown && <ReactMarkdown remarkPlugins={[remarkGfm]} components={docComponents(current)}>{markdown}</ReactMarkdown>}
       </article>
     </div>
     </>

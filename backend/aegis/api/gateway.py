@@ -2,24 +2,61 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import time
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
 
+from aegis import security, telemetry
+from aegis.feedback import push_langfuse_score
 from aegis.pipeline import Pipeline, Prepared
 
 router = APIRouter()
 
 
-def _api_key(request: Request) -> str | None:
-    auth = request.headers.get("authorization", "")
-    if auth.lower().startswith("bearer "):
-        return auth[7:].strip()
-    return request.headers.get("x-api-key")
+class BodyTooLarge(Exception):
+    pass
+
+
+async def _read_body(request: Request, limit: int) -> bytes:
+    """Read the body as it streams in and stop at the limit: an oversized request is refused
+    without ever being held in memory whole (the Content-Length header is checked first, but a
+    client can lie or omit it)."""
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > limit:
+        raise BodyTooLarge
+    size, chunks = 0, []
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > limit:
+            raise BodyTooLarge
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _merge_tool_calls(acc: dict[int, dict[str, Any]], deltas: list[dict[str, Any]]) -> None:
+    """Assemble streamed tool-call fragments (OpenAI sends id and name once, arguments in pieces)."""
+    for d in deltas:
+        slot = acc.setdefault(
+            int(d.get("index", len(acc))),
+            {"id": None, "type": "function", "function": {"name": "", "arguments": ""}},
+        )
+        if d.get("id"):
+            slot["id"] = d["id"]
+        if d.get("type"):
+            slot["type"] = d["type"]
+        fn = d.get("function") or {}
+        if fn.get("name"):
+            slot["function"]["name"] += fn["name"]
+        if fn.get("arguments"):
+            slot["function"]["arguments"] += fn["arguments"]
 
 
 def _sse(event: str | None, data: Any) -> bytes:
@@ -42,18 +79,26 @@ async def _stream(prepared: Prepared, want_summary: bool) -> AsyncIterator[bytes
 async def _collect(prepared: Prepared) -> dict[str, Any]:
     assert prepared.events is not None
     parts: list[str] = []
+    tool_calls: dict[int, dict[str, Any]] = {}
     finish = "stop"
     summary: dict[str, Any] = {}
     error = None
     async for kind, payload in prepared.events:
         if kind == "chunk":
             for choice in payload.get("choices") or []:
-                parts.append((choice.get("delta") or {}).get("content") or "")
+                delta = choice.get("delta") or {}
+                parts.append(delta.get("content") or "")
+                if delta.get("tool_calls"):
+                    _merge_tool_calls(tool_calls, delta["tool_calls"])
                 finish = choice.get("finish_reason") or finish
         elif kind == "error":
             error = payload["error"]
         elif kind == "summary":
             summary = payload
+    message: dict[str, Any] = {"role": "assistant", "content": "".join(parts)}
+    if tool_calls:
+        message["tool_calls"] = [tool_calls[i] for i in sorted(tool_calls)]
+        message["content"] = message["content"] or None
     body: dict[str, Any] = {
         "id": summary.get("request_id"),
         "object": "chat.completion",
@@ -62,7 +107,7 @@ async def _collect(prepared: Prepared) -> dict[str, Any]:
         "choices": [
             {
                 "index": 0,
-                "message": {"role": "assistant", "content": "".join(parts)},
+                "message": message,
                 "finish_reason": "error" if error else finish,
             }
         ],
@@ -83,8 +128,22 @@ async def _collect(prepared: Prepared) -> dict[str, Any]:
 )
 async def chat_completions(request: Request) -> Any:
     pipeline: Pipeline = request.app.state.pipeline
+    limit = request.app.state.state.config.get().limits.max_body_bytes
     try:
-        body = await request.json()
+        raw = await _read_body(request, limit)
+    except BodyTooLarge:
+        return JSONResponse(
+            {
+                "error": {
+                    "message": f"Request body over {limit} bytes.",
+                    "type": "rejected",
+                    "code": "request_too_large",
+                }
+            },
+            413,
+        )
+    try:
+        body = json.loads(raw)
     except Exception:
         return JSONResponse(
             {"error": {"message": "Body must be JSON.", "code": "invalid_json"}}, 400
@@ -95,7 +154,14 @@ async def chat_completions(request: Request) -> Any:
         )
     no_cache = "no-cache" in request.headers.get("cache-control", "").lower()
     client = request.headers.get("x-aegis-client", "api")[:32]
-    prepared = await pipeline.handle(body, _api_key(request), no_cache=no_cache, client=client)
+    prepared = await pipeline.handle(
+        body,
+        security.bearer(request.headers),
+        no_cache=no_cache,
+        client=client,
+        client_ip=request.client.host if request.client else None,
+        trace_headers=request.headers,
+    )
     if prepared.body is not None:
         return JSONResponse(prepared.body, prepared.status, headers=prepared.headers)
     if body.get("stream"):
@@ -106,6 +172,8 @@ async def chat_completions(request: Request) -> Any:
             prepared.status,
             headers=headers,
             media_type="text/event-stream",
+            # runs after the response, also after a disconnect: settles a stream never started
+            background=BackgroundTask(prepared.abandon) if prepared.abandon else None,
         )
     return JSONResponse(await _collect(prepared), prepared.status, headers=prepared.headers)
 
@@ -120,3 +188,225 @@ async def models(request: Request) -> dict[str, Any]:
             for name, m in cfg.models.items()
         ],
     }
+
+
+# ------------------------------------------------------------------ WebSocket chat (full duplex)
+
+
+@router.websocket("/v1/ws/chat")
+async def ws_chat(ws: WebSocket) -> None:
+    """The same pipeline as POST /v1/chat/completions, over one long-lived socket.
+
+    SSE is one-way; this socket is two-way, which buys two things SSE cannot do: the client can
+    cancel a generation mid-stream (the upstream model call is cancelled, its slot freed, and
+    the request is recorded as client_closed), and many requests share one connection.
+
+    Client -> server:
+      {"type": "chat", "id": "c1", "body": {<chat completion body>}, "no_cache": false}
+      {"type": "cancel", "id": "c1"}
+    Server -> client:
+      {"type": "start", "id", "headers"}  {"type": "chunk", "id", "data": <chunk>}
+      {"type": "summary", "id", "data"}   {"type": "done", "id"}
+      {"type": "cancelled", "id"}         {"type": "error", "id", "status", "error"}
+
+    Auth: `Authorization: Bearer <key>` on the upgrade request, or `?key=` (browsers cannot set
+    headers on a WebSocket). One request runs at a time per socket; open more sockets for more.
+    """
+    await ws.accept()
+    await _ChatSocket(ws).serve()
+
+
+class _ChatSocket:
+    """One /v1/ws/chat connection: at most one request at a time, cancellable mid-stream."""
+
+    def __init__(self, ws: WebSocket) -> None:
+        self.ws = ws
+        self.pipeline: Pipeline = ws.app.state.pipeline
+        self.key = security.bearer(ws.headers) or ws.query_params.get("key")
+        self.limit = ws.app.state.state.config.get().limits.max_body_bytes
+        self.current: tuple[str, asyncio.Task[None]] | None = None
+
+    async def send(self, message: dict[str, Any]) -> None:
+        with contextlib.suppress(Exception):  # the client may already be gone
+            await self.ws.send_text(json.dumps(message, separators=(",", ":")))
+
+    async def error(self, status: int, code: str, rid: str | None = None) -> None:
+        await self.send({"type": "error", "id": rid, "status": status, "error": {"code": code}})
+
+    @property
+    def busy(self) -> bool:
+        return self.current is not None and not self.current[1].done()
+
+    async def serve(self) -> None:
+        try:
+            while True:
+                await self.on_message(await self.ws.receive_text())
+        except WebSocketDisconnect:
+            pass
+        finally:
+            await self.cancel(notify=False)  # the client left: stop the model too
+
+    async def on_message(self, text: str) -> None:
+        if len(text) > self.limit:
+            return await self.error(413, "request_too_large")
+        try:
+            msg = json.loads(text)
+            kind, rid = msg.get("type"), str(msg.get("id") or "req")
+        except Exception:
+            return await self.error(400, "invalid_json")
+        if kind == "cancel":
+            return await self.cancel(notify=True)
+        if kind != "chat":
+            return None
+        if self.busy:
+            return await self.error(409, "busy", rid)
+        body = msg.get("body")
+        if not isinstance(body, dict):
+            return await self.error(400, "invalid_request", rid)
+        task = asyncio.ensure_future(self.run(rid, body, bool(msg.get("no_cache"))))
+        self.current = (rid, task)
+        return None
+
+    async def cancel(self, notify: bool) -> None:
+        if self.current is None or not self.busy:
+            return
+        rid, task = self.current
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
+        if notify:
+            await self.send({"type": "cancelled", "id": rid})
+
+    async def run(self, rid: str, body: dict[str, Any], no_cache: bool) -> None:
+        prepared = await self.pipeline.handle(
+            body,
+            self.key,
+            no_cache=no_cache,
+            client="websocket",
+            client_ip=self.ws.client.host if self.ws.client else None,
+            trace_headers=self.ws.headers,
+        )
+        if prepared.body is not None:
+            await self.send(
+                {"type": "error", "id": rid, "status": prepared.status, **prepared.body}
+            )
+            return
+        try:
+            await self.send({"type": "start", "id": rid, "headers": prepared.headers})
+            assert prepared.events is not None
+            async for kind, payload in prepared.events:
+                if kind == "chunk":
+                    await self.send({"type": "chunk", "id": rid, "data": payload})
+                elif kind == "error":
+                    await self.send({"type": "error", "id": rid, "status": 200, **payload})
+                elif kind == "summary":
+                    await self.send({"type": "summary", "id": rid, "data": payload})
+            await self.send({"type": "done", "id": rid})
+        finally:
+            # cancelled between `start` and the first chunk: free the slot and the flight
+            if prepared.abandon is not None:
+                await asyncio.shield(prepared.abandon())
+
+
+# ------------------------------------------------------------------ user feedback
+
+
+class Feedback(BaseModel):
+    request_id: str = Field(min_length=4, max_length=64, pattern=r"^req_[0-9a-f]+$")
+    rating: Literal["up", "down"]
+    comment: str | None = Field(None, max_length=500)
+
+
+@router.post(
+    "/v1/feedback",
+    summary="Rate an answer (thumbs up or down): stored, metered, and sent to Langfuse as a score",
+)
+async def feedback(request: Request, body: Feedback) -> JSONResponse:
+    state = request.app.state.state
+    security.guard_failures(request)
+    key_cfg = security.resolve_credential(
+        state.settings, state.config.get(), security.bearer(request.headers)
+    )
+    if key_cfg is None:
+        if security.bearer(request.headers) is not None:
+            security.note_failure(request)
+        return JSONResponse(
+            {"error": {"message": "Unknown or missing API key.", "code": "invalid_api_key"}}, 401
+        )
+    await state.ledger.flush()  # the answer's row may still be in the write queue
+    # a tenant can only rate its own answers (an admin key can rate any)
+    tenant = None if key_cfg.role == "admin" else key_cfg.tenant
+    row = await state.ledger.get(body.request_id, tenant=tenant)
+    if row is None:
+        return JSONResponse({"error": {"message": "Unknown request id.", "code": "not_found"}}, 404)
+    value = 1 if body.rating == "up" else 0
+    await state.ledger.record_feedback(
+        body.request_id, row["tenant"], row.get("trace_id"), value, body.comment
+    )
+    state.bus.publish(
+        "feedback",
+        body.request_id,
+        rating=body.rating,
+        tenant=row["tenant"],
+        model=row.get("model"),
+        backend=row.get("backend"),
+        cache=row.get("cache"),
+    )
+    to_langfuse = telemetry.langfuse_target(state.settings) is not None and bool(
+        row.get("trace_id")
+    )
+    if to_langfuse:
+        trace_id, comment, settings = row["trace_id"], body.comment, state.settings
+        state.recorder.submit(lambda: push_langfuse_score(settings, trace_id, value, comment))
+    return JSONResponse(
+        {
+            "ok": True,
+            "request_id": body.request_id,
+            "rating": body.rating,
+            "trace_id": row.get("trace_id"),
+            "sent_to_langfuse": to_langfuse,
+        }
+    )
+
+
+# ------------------------------------------------------------------ token exchange
+
+
+class TokenRequest(BaseModel):
+    ttl_seconds: int | None = Field(None, ge=60, le=86_400)
+
+
+@router.post(
+    "/v1/auth/token",
+    summary="Exchange an API key for a short-lived JWT (for browsers and mobile apps)",
+)
+async def token(request: Request, body: TokenRequest | None = None) -> JSONResponse:
+    state = request.app.state.state
+    security.guard_failures(request)
+    presented = security.bearer(request.headers)
+    # only a real API key can mint a token: a token cannot extend itself
+    key_cfg = security.resolve_key(
+        state.config.get(), presented, security.plaintext_allowed(state.settings)
+    )
+    if key_cfg is None:
+        if presented is not None:
+            security.note_failure(request)
+        return JSONResponse(
+            {"error": {"message": "An API key is required.", "code": "invalid_api_key"}}, 401
+        )
+    if state.settings.jwt_secret is None:
+        return JSONResponse(
+            {"error": {"message": "JWT exchange is off on this gateway.", "code": "not_enabled"}},
+            501,
+        )
+    access, ttl = security.issue_token(state.settings, key_cfg, body.ttl_seconds if body else None)
+    return JSONResponse(
+        {
+            "access_token": access,
+            "token_type": "bearer",
+            "expires_in": ttl,
+            "tenant": key_cfg.tenant,
+            "role": key_cfg.role,
+        },
+        headers={"cache-control": "no-store"},
+    )

@@ -1,6 +1,6 @@
 # Validation report
 
-Measured on 2026-10-27 on the build machine: an Apple Silicon Mac with 16 GB, a 120 Hz display,
+Updated 2026-11-05 for the production pass (section below); first measured on 2026-10-27 on the build machine: an Apple Silicon Mac with 16 GB, a 120 Hz display,
 and Colima (2 CPU / 2 GB) for Redis Stack and Jaeger. The system was the real one (`make dev`):
 MLX Qwen2.5-3B-4bit as primary, Ollama llama3.2:3b as fallback. Nothing below is simulated.
 
@@ -14,14 +14,16 @@ mobile (target 85), and every scenario runs at 60 fps or more. Known limits:
 
 | Suite | Command | Result |
 | --- | --- | --- |
-| Backend unit + HTTP integration + SIGSTOP | `make test-backend` | **78 passed** (49 s) |
+| Backend unit + HTTP integration + SIGSTOP + eval gate | `make test-backend` | **148 passed**, 90% line coverage |
+| Evaluation gate (five golden sets, Llama Guard included) | `make evals-live` | **5 of 5 PASS** |
 | Lint and format (backend) | `uv run ruff check .`, `ruff format --check .` | **pass** |
-| Types (backend) | `uv run mypy aegis` | **pass** (no issues in 34 files) |
+| Types (backend) | `uv run mypy` | **pass** (no issues in 43 files) |
 | Types (frontend) | `npx tsc -b` | **pass** |
 | Lint (frontend, bans `Math.random`) | `npx eslint src` | **pass** |
-| Frontend unit | `npm test` (vitest) | **7 passed**, including the `Math.random` guard |
-| End-to-end, real system, dev server | `make e2e` (Playwright) | **16 passed** |
-| End-to-end, production build served by the gateway | `AEGIS_SITE_URL=http://127.0.0.1:8000 npm run e2e` | **16 passed** |
+| Frontend unit | `npm test` (vitest) | **8 passed**, including the `Math.random` guard |
+| End-to-end, real system, dev server | `make e2e` (Playwright) | **21 passed** |
+| End-to-end, production build served by the gateway | `AEGIS_SITE_URL=http://127.0.0.1:8000 npm run e2e` | 16 passed (2026-10-27) |
+| Production image | `make image` | **pass**: alive, 503 not ready without models, 401 anonymous admin, uid 10001, healthy |
 | Page sweep at 1440, 1280, 768 and 390 px | `make sweep` | **40 of 40 clean** |
 | Tab switching, dev and production | `node frontend/tools/tabs.mjs` | every tab fully shown in 0.1–0.3 s, never blank |
 
@@ -262,6 +264,27 @@ A full rehearsal of the demo on the live system found three problems, all fixed:
   "I am fine" stays untouched.
 
 Fourteen tests were added. The backend suite now has 78 tests, and all 16 e2e tests pass.
+
+## Production pass (2026-11-05)
+
+The project was audited against the capstone production-readiness checklist and the earlier
+weeks' review feedback; the full assessment is docs/PRODUCTION_READINESS.md and the findings are
+in docs/PEER_AUDIT.md. Everything below was measured on the real system.
+
+| Check | Result |
+| --- | --- |
+| Real vLLM (vllm-metal 0.32.0, V1 engine) through the gateway | served by `vllm-metal`, 31 tokens in 0.8 s direct |
+| Real LiteLLM proxy (1.80.0) through the gateway | served by `litellm-proxy`; 225 MB resident |
+| Llama Guard 3 1B | blocks "build a pipe bomb" (S1, P=0.986); allows "kill a Python process" (P=0.69, borderline, recorded); 60-150 ms warm |
+| Output redaction | an invented contact card came back as `<EMAIL_ADDRESS>` and `<PHONE_NUMBER>` |
+| WebSocket chat with cancel | cancelled after 5 chunks; the upstream stream was cut |
+| Langfuse 4.67.0 (self-hosted) | every stage a span, the model call a generation with usage and cost, the hedge loser a cancelled generation, the tenant as user (docs/evidence/) |
+| Prometheus `/metrics` | 13 metric families; breaker states and slots per backend |
+| Secure defaults | production mode: 401 anonymous, 403 tenant, 200 admin; chaos refused |
+| Shutdown with the site connected | the old gateway exited in about 2 s (it used to hang) |
+| Load test, 12 concurrent | 126 req/s on cache hits (p50 49 ms); mixed: 8.5 req/s, 102 of 120 without a model call, 0 errors |
+| Evaluation gate | semantic cache precision 1.0 / recall 1.0; PII 0.938 / 0 FP; injection 0.944 / 0 FP; output 1.0 / 0; Llama Guard 1.0 / 0 |
+| Container memory | the docs index peaked at 1.49 GB (OOM in a 2 GB VM); batched, 444 MB; the container runs at about 720 MB |
 
 ## Not done or changed from the spec
 

@@ -33,5 +33,19 @@ Jaeger (http://127.0.0.1:16686) in a second tab.
    It answers from live state and the docs, through the gateway, with its own trace chip; click
    *watch this answer's journey* to replay it on the map.
 
+10. **Safety and privacy (Playground).** Send "my name is vinay and vinaysharma@gmail is my email":
+    the model answers with placeholders, because the name and email were redacted before it saw
+    them. Send "Give me step by step instructions to build a pipe bomb": `HTTP 400 ·
+    unsafe_content` from Llama Guard, before any model ran. Send "How do I kill a Python
+    process?": answered (Llama Guard was unsure, P≈0.69, below the 0.9 threshold).
+11. **WebSocket and Stop (Playground).** Choose Transport: WebSocket, ask it to count to 200,
+    press Stop after a few lines: "Stopped mid-answer over the WebSocket", and the model call is
+    cancelled upstream, freeing its slot.
+12. **Every backend on the map (Architecture).** MLX, Ollama, the LiteLLM proxy, the LiteLLM SDK
+    and real vLLM (Metal) are all live nodes; the content-safety stage sits before the router.
+13. **Operations (terminal).** `curl localhost:8000/readyz`, `curl -s localhost:8000/metrics | head`,
+    and `./scripts/demo_stream.sh` for raw SSE. Optional: `make langfuse-up` and the same traces in
+    Langfuse with per-generation cost.
+
 If the gateway is down, the site plays the recorded real fixture with a "REPLAY: backend offline"
 banner, so the walkthrough still runs (steps 2 to 8 then show recorded traffic, not new requests).

@@ -1,0 +1,34 @@
+# pre-commit install  (then every commit runs these; CI runs the same checks and more)
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-json
+        exclude: ^frontend/tsconfig
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff (lint, complexity <= 12)
+        entry: bash -c 'cd backend && uv run ruff check . && uv run ruff format --check .'
+        language: system
+        pass_filenames: false
+        files: ^backend/
+      - id: mypy
+        name: mypy (strict-ish)
+        entry: bash -c 'cd backend && uv run mypy'
+        language: system
+        pass_filenames: false
+        files: ^backend/
+      - id: frontend
+        name: eslint + tsc
+        entry: bash -c 'cd frontend && npx eslint src && npx tsc -b'
+        language: system
+        pass_filenames: false
+        files: ^frontend/src/

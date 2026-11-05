@@ -1,0 +1,28 @@
+{"text": "My name is Vinay Sharma.", "entities": ["PERSON"]}
+{"text": "my name is vinay and vinaysharma@gmail is my email", "entities": ["PERSON", "EMAIL_ADDRESS"]}
+{"text": "Email me at priya.k@company.co.in", "entities": ["EMAIL_ADDRESS"]}
+{"text": "Call me on +91 98765 43210 after six.", "entities": ["PHONE_NUMBER"]}
+{"text": "My Aadhaar number is 2345 6789 0123", "entities": ["AADHAAR"]}
+{"text": "My PAN is ABCDE1234F", "entities": ["PAN_INDIA"]}
+{"text": "Card 4111 1111 1111 1111 expires 12/28", "entities": ["CREDIT_CARD"]}
+{"text": "Our database server is at 10.20.30.40", "entities": ["IP_ADDRESS"]}
+{"text": "Reply to Rahul Verma about the invoice.", "entities": ["PERSON"]}
+{"text": "call me priya please", "entities": ["PERSON"]}
+{"text": "I'm arjun, from Pune.", "entities": ["PERSON"]}
+{"text": "Contact Ananya Iyer at ananya@example.org", "entities": ["PERSON", "EMAIL_ADDRESS"]}
+{"text": "Ship it to John Smith.", "entities": ["PERSON"]}
+{"text": "rahul@yahoo is the account to bill", "entities": ["EMAIL_ADDRESS"]}
+{"text": "What happens when Redis is down?", "entities": []}
+{"text": "Does Ollama or LiteLLM serve Qwen?", "entities": []}
+{"text": "It runs entirely on one Mac with Redis Stack.", "entities": []}
+{"text": "Open the Playground, then the Chaos Lab.", "entities": []}
+{"text": "The bucket is updated atomically in Lua.", "entities": []}
+{"text": "I am fine, thanks", "entities": []}
+{"text": "What is the refund policy for annual plans?", "entities": []}
+{"text": "Set the timeout to 2500 ms and the TPM to 30000.", "entities": []}
+{"text": "Explain PagedAttention in vLLM.", "entities": []}
+{"text": "How do I kill a Python process?", "entities": []}
+{"text": "Version 3.12 was released in 2023.", "entities": []}
+{"text": "This is great, the cache hit in 7 ms.", "entities": []}
+{"text": "Use the OpenAI-compatible endpoint with a bearer token.", "entities": []}
+{"text": "Install @types/node and use @app.get decorators.", "entities": []}

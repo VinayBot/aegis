@@ -1,4 +1,6 @@
-# Side systems only: the gateway, the models and the frontend run natively on the Mac.
+# Side systems for `make dev` (Redis Stack, Jaeger). The gateway runs natively on the Mac there.
+# `--profile container` also runs the gateway image (Dockerfile) on :8001, in production mode,
+# talking to the same Redis and Jaeger and to the model servers on the host.
 name: aegis
 services:
   redis:
@@ -18,3 +20,34 @@ services:
       - "4317:4317"     # OTLP gRPC
       - "4318:4318"     # OTLP HTTP
     restart: unless-stopped
+
+  gateway:
+    profiles: ["container"]
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: aegis-gateway:local
+    ports: ["127.0.0.1:8001:8000"]
+    environment:
+      AEGIS_ENV: production
+      AEGIS_ADMIN_KEY: ${AEGIS_ADMIN_KEY:-}   # set it to use the control plane
+      # production ignores the YAML's plaintext demo keys; 1 accepts them for a local demo
+      AEGIS_ALLOW_PLAINTEXT_KEYS: ${AEGIS_ALLOW_PLAINTEXT_KEYS:-0}
+      AEGIS_REDIS_URL: redis://redis:6379/0
+      AEGIS_OTLP_ENDPOINT: http://jaeger:4318
+      AEGIS_JAEGER_QUERY_URL: http://jaeger:16686
+      AEGIS_SELF_URL: http://127.0.0.1:8000
+      AEGIS_MODEL_HOST: host.docker.internal
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-aegis-local}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      redis: {condition: service_healthy}
+    read_only: true
+    tmpfs: ["/tmp"]
+    volumes: ["gateway-var:/app/var"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    restart: unless-stopped
+
+volumes:
+  gateway-var:

@@ -6,8 +6,13 @@ http://127.0.0.1:8000/api/swagger), with notes on what the schema cannot show.
 ## Data plane (OpenAI-compatible)
 
 `POST /v1/chat/completions` accepts the OpenAI chat body (`model`, `messages`, `stream`,
-`temperature`, `top_p`, `max_tokens`, `stop`, `seed`...). Authenticate with
-`Authorization: Bearer <key>` (keys and tenants live in `backend/config/gateway.yaml`).
+`temperature`, `top_p`, `max_tokens`, `stop`, `seed`, `tools`, `tool_choice`,
+`parallel_tool_calls`, `response_format`...). Authenticate with `Authorization: Bearer <key>`
+(keys and tenants live in `backend/config/gateway.yaml`).
+
+Native tool calling passes through: tool definitions reach the backend, `tool_calls` deltas
+stream back unchanged, non-streaming responses carry the assembled `message.tool_calls`, and the
+tools are part of the cache key. A tool call is never cached (it acts on one conversation).
 
 Request headers:
 
@@ -30,22 +35,48 @@ Errors (JSON `{"error": {"message", "type", "code", "request_id", "trace_id"}}`)
 
 | Status | Code | When |
 | --- | --- | --- |
+| 413 | `request_too_large` | body over `limits.max_body_bytes` (read as it streams, never whole) |
+| 400 | `too_many_messages` | more than `limits.max_messages` |
+| 400 | `context_length_exceeded` | prompt (with tool schemas) over `limits.max_prompt_tokens` |
+| 400 | `max_tokens_too_large` | `max_tokens` over `limits.max_output_tokens` |
 | 400 | `prompt_injection` | the injection guardrail matched |
+| 400 | `unsafe_content` | Llama Guard 3: P(unsafe) at or above the threshold; `categories` lists the hazards |
 | 400 | `invalid_request` | `messages` missing or malformed |
 | 401 | `invalid_api_key` | unknown or missing key |
 | 402 | `budget_exceeded` | tenant over its hard monthly budget |
 | 404 | `model_not_found` | unknown public model name |
 | 429 | `rate_limited` | over the key's tokens per minute (`Retry-After`) |
+| 429 | `too_many_auth_failures` | 20 failed authentications from this address within a minute (`Retry-After`) |
 | 502 | `upstream_rejected` | a backend rejected the request itself (4xx other than 404/429) |
 | 503 | `no_backend_available` | all breakers open, or no slot free within 10 s (`Retry-After`) |
+| 503 | `safety_unavailable` | the safety classifier is down and `safety.on_error: block` |
 
-WebSocket `/ws/events` sends `{"type":"hello","recent":[...]}` on connect, then every lifecycle
+WebSocket `/v1/ws/chat` is the same pipeline over one full-duplex socket. Send
+`{"type":"chat","id":"c1","body":{...}}`; receive `start` (headers), `chunk`s, `summary`, `done`.
+Send `{"type":"cancel","id":"c1"}` mid-stream: the upstream model call is cancelled and the
+server answers `cancelled`. Authenticate with the header or `?key=` (browsers cannot set headers
+on a WebSocket).
+
+WebSocket `/ws/events` (admin) sends `{"type":"hello","recent":[...]}` on connect, then every lifecycle
 event (`request.start`, `stage.enter`, `stage.exit`, `cache.hit`, `cache.miss`,
 `coalesce.join`, `backend.try`, `hedge.fire`, `hedge.win`, `failover`,
 `backend.first_token`, `request.end`, `breaker.state`, `ratelimit.reject`, `budget.warn`,
 `guardrail.redact`, `chaos.action`, `scenario.step`, `health`), and a heartbeat every 3 s.
 
-Chaos endpoints answer 403 unless the gateway runs with `AEGIS_CHAOS_ENABLED=1` (dev only).
+Chaos endpoints answer 403 unless the gateway runs with `AEGIS_ENV=dev` and
+`AEGIS_CHAOS_ENABLED=1`; production refuses chaos even when the flag is set.
+
+## Access levels
+
+In production (the default), every `/api/*` route except the public ones needs a key; admin
+routes need an admin key (YAML `role: admin`, or `AEGIS_ADMIN_KEY`). In dev, a caller on the
+loopback interface is the local operator (admin). See docs/ARCHITECTURE.md, Security model.
+
+| Level | Routes |
+| --- | --- |
+| public | `/healthz`, `/readyz`, `/api/health`, `/api/docs*`, `GET /api/scenarios`, `/v1/models` |
+| viewer (any key, scoped to its tenant) | `GET /api/requests`, `GET /api/requests/{id}`, `GET /api/tenants` |
+| admin | everything else under `/api`, `/ws/events`, `/metrics` |
 
 ## Every endpoint
 
@@ -80,3 +111,9 @@ Chaos endpoints answer 403 unless the gateway runs with `AEGIS_CHAOS_ENABLED=1` 
 | `GET /api/docs` | Project documents |
 | `GET /api/docs/{slug}` | One project document (markdown) |
 | `POST /api/assistant/chat` | Ask AEGIS about the project (SSE); routed through the gateway |
+| `POST /v1/auth/token` | Exchange an API key for a short-lived JWT (HS256; `ttl_seconds` 60-86400, default 900); 501 when `AEGIS_JWT_SECRET` is unset |
+| `POST /v1/feedback` | Rate an answer: `{"request_id", "rating": "up"|"down", "comment"?}`; tenant-scoped; stored, metered, and a Langfuse `user-feedback` score on the trace |
+| `GET /healthz` | Liveness: the process and its event loop respond |
+| `GET /readyz` | Readiness: config loaded and at least one backend can serve (503 otherwise) |
+| `GET /metrics` | Prometheus text format: requests, latency and TTFT histograms, tokens, est. cost and savings, rejections, failovers, hedges, retries, breaker states, slots, PII redactions |
+| `WS /v1/ws/chat` | Chat over a WebSocket, with mid-stream cancel |

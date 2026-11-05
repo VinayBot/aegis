@@ -1,5 +1,12 @@
 """OpenTelemetry: every request is one trace, every pipeline stage one span, exported over OTLP
-HTTP (Jaeger here; any OTLP collector, Langfuse included, can ingest the same export).
+HTTP to Jaeger and, when keys are configured, to Langfuse at the same time.
+
+Langfuse (cloud, or self-hosted v3+) ingests OTLP at `{host}/api/public/otel` with HTTP Basic auth
+(public key : secret key). The spans carry Langfuse's own attributes as well: the root span names
+the trace and sets the user (the tenant) and tags; the upstream model call is marked as a
+`generation` with its model, token usage and estimated cost, so Langfuse's cost and latency views
+work without an SDK. Prompt and completion text is never exported: traces carry counts, never
+content (the gateway's privacy rule; PII is redacted before any span exists anyway).
 
 The upstream model call follows the GenAI semantic conventions: span name `chat {model}`,
 `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.*`, `gen_ai.response.*` and
@@ -8,12 +15,14 @@ The upstream model call follows the GenAI semantic conventions: span name `chat 
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import base64
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from opentelemetry import context as otel_context
-from opentelemetry import trace
+from opentelemetry import propagate, trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor, SpanExporter
@@ -21,25 +30,61 @@ from opentelemetry.trace import Span, SpanKind, Status, StatusCode
 
 from aegis import __version__
 
+if TYPE_CHECKING:
+    from aegis.settings import Settings
+
 _tracer: trace.Tracer | None = None
 _provider: TracerProvider | None = None
+exporters: list[str] = []  # where spans go, for /api/health and the docs
+
+
+@dataclass(frozen=True)
+class OtlpTarget:
+    name: str
+    endpoint: str  # full .../v1/traces URL
+    headers: dict[str, str]
+
+
+def langfuse_target(settings: Settings) -> OtlpTarget | None:
+    """Langfuse's OTLP endpoint and Basic auth, or None when its keys are not configured."""
+    if not settings.langfuse_public_key or settings.langfuse_secret_key is None:
+        return None
+    secret = settings.langfuse_secret_key.get_secret_value()
+    token = base64.b64encode(f"{settings.langfuse_public_key}:{secret}".encode()).decode()
+    return OtlpTarget(
+        "langfuse",
+        f"{settings.langfuse_host.rstrip('/')}/api/public/otel/v1/traces",
+        {"Authorization": f"Basic {token}"},
+    )
 
 
 def setup_tracing(
-    service_name: str, endpoint: str | None, exporter: SpanExporter | None = None
+    service_name: str,
+    endpoint: str | None,
+    exporter: SpanExporter | None = None,
+    langfuse: OtlpTarget | None = None,
 ) -> None:
     global _tracer, _provider
     provider = TracerProvider(
         resource=Resource.create({"service.name": service_name, "service.version": __version__})
     )
+    exporters.clear()
     if exporter is not None:
         # An injected exporter (tests) gets every span synchronously.
         provider.add_span_processor(SimpleSpanProcessor(exporter))
-    elif endpoint:
+        exporters.append("test")
+    targets: list[OtlpTarget] = []
+    if endpoint and exporter is None:
+        targets.append(OtlpTarget("jaeger", f"{endpoint.rstrip('/')}/v1/traces", {}))
+    if langfuse is not None:
+        targets.append(langfuse)
+    if targets:
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
-        exporter = OTLPSpanExporter(endpoint=f"{endpoint.rstrip('/')}/v1/traces", timeout=2)
-        provider.add_span_processor(BatchSpanProcessor(exporter, schedule_delay_millis=500))
+        for t in targets:  # one batch processor each: a slow Langfuse never delays Jaeger
+            otlp = OTLPSpanExporter(endpoint=t.endpoint, headers=t.headers or None, timeout=3)
+            provider.add_span_processor(BatchSpanProcessor(otlp, schedule_delay_millis=500))
+            exporters.append(t.name)
     _provider = provider
     _tracer = provider.get_tracer("aegis.gateway", __version__)
 
@@ -71,12 +116,24 @@ def stage_span(parent: Span, stage: str, **attributes: Any) -> Iterator[Span]:
         yield span
 
 
-def start_root(model: str, attributes: dict[str, Any]) -> Span:
+def start_root(
+    model: str, attributes: dict[str, Any], carrier: Mapping[str, str] | None = None
+) -> Span:
+    """The request's root span. With a W3C `traceparent` in `carrier` (the caller's headers) it
+    joins the caller's trace, so one trace runs from the client app through the gateway to the
+    model; without one it starts a new trace."""
+    parent = propagate.extract(dict(carrier)) if carrier else otel_context.Context()
     return tracer().start_span(
         "POST /v1/chat/completions",
         kind=SpanKind.SERVER,
-        attributes={"gen_ai.request.model": model, **_clean(attributes)},
-        context=otel_context.Context(),
+        attributes={
+            "gen_ai.request.model": model,
+            "langfuse.trace.name": f"chat {model}",
+            # the request, not a model call: usage is counted once, on the generation below
+            "langfuse.observation.type": "span",
+            **_clean(attributes),
+        },
+        context=parent,
     )
 
 
@@ -94,6 +151,9 @@ def start_genai_span(
         "gen_ai.request.model": upstream_model,
         "aegis.backend": backend,
         "aegis.hedge": hedge,
+        # Langfuse: this span is the model call (a "generation"), priced and counted there
+        "langfuse.observation.type": "generation",
+        "langfuse.observation.model.name": upstream_model,
     }
     for key, attr in (
         ("temperature", "gen_ai.request.temperature"),

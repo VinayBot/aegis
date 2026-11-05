@@ -1,0 +1,18 @@
+# only what the image needs reaches the build
+**/node_modules
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+.git
+.arena
+.claude
+var
+images
+frontend/dist
+frontend/test-results
+frontend/playwright-report
+frontend/public/replay/*.tmp
+backend/evals/report.json
+**/.DS_Store

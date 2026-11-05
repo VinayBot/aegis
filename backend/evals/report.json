@@ -1,0 +1,13 @@
+[
+  {
+    "name": "output_redaction",
+    "n": 16,
+    "metrics": {
+      "recall": 1.0,
+      "false_positive_rate": 0.0
+    },
+    "failures": [],
+    "passed": true,
+    "seconds": 0.38
+  }
+]

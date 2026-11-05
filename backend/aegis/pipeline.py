@@ -16,23 +16,35 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from opentelemetry import trace
 from opentelemetry.trace import Span
 
-from aegis import guardrails, telemetry
+from aegis import guardrails, logcontext, security, telemetry
 from aegis.cache import CachedCompletion, CacheKeys, build_keys
 from aegis.coalesce import Flight
-from aegis.config import GatewayConfig, Price
+from aegis.config import GatewayConfig, KeyConfig, Price
+from aegis.guardrails.output import StreamRedactor
+from aegis.retry import full_jitter
 from aegis.router import MidStreamError, NoBackendAvailable, Routed, UpstreamClientError
 from aegis.state import AppState
-from aegis.tokens import ESTIMATE_MARGIN, estimate_messages, estimate_text, message_text
+from aegis.tokens import (
+    ESTIMATE_MARGIN,
+    estimate_messages,
+    estimate_text,
+    estimate_tools,
+    message_text,
+)
 
+request_log = logging.getLogger("aegis.request")
 COST_LABEL = "est. cloud equivalent"
+ROLES = frozenset({"system", "developer", "user", "assistant", "tool"})
 
 
 class GatewayError(Exception):
@@ -65,7 +77,8 @@ class RequestContext:
     root: Span
     trace_id: str
     started: float
-    api_key: str = ""
+    key_id: str = ""
+    key_cfg: KeyConfig | None = None
     tenant: str = "?"
     tpm: int = 0
     params: dict[str, Any] = field(default_factory=dict)
@@ -84,10 +97,34 @@ class Prepared:
     headers: dict[str, str]
     events: AsyncIterator[tuple[str, dict[str, Any]]] | None = None
     body: dict[str, Any] | None = None
+    # call when the client leaves before `events` is first iterated: frees the backend slot and
+    # the coalescing flight and records the request. A no-op once streaming has started.
+    abandon: Callable[[], Awaitable[None]] | None = None
 
 
 def price_of(price: Price, tokens_in: int, tokens_out: int) -> float:
     return tokens_in * price.input_per_1m / 1e6 + tokens_out * price.output_per_1m / 1e6
+
+
+def _redact_chunk(chunk: dict[str, Any], redactor: StreamRedactor) -> dict[str, Any]:
+    """The chunk with its text passed through the streaming output redactor."""
+    choices = chunk.get("choices")
+    if not choices:
+        return chunk
+    new = []
+    for choice in choices:
+        delta = dict(choice.get("delta") or {})
+        text = redactor.feed(delta.get("content") or "")
+        if choice.get("finish_reason"):
+            text += redactor.flush()
+        if "content" in delta or text:
+            delta["content"] = text
+        new.append({**choice, "delta": delta})
+    return {**chunk, "choices": new}
+
+
+def _has_tool_calls(chunk: dict[str, Any]) -> bool:
+    return any((c.get("delta") or {}).get("tool_calls") for c in chunk.get("choices") or [])
 
 
 def _delta_content(chunk: dict[str, Any]) -> tuple[str, str | None]:
@@ -161,6 +198,8 @@ class Pipeline:
         *,
         no_cache: bool = False,
         client: str = "api",
+        client_ip: str | None = None,
+        trace_headers: Mapping[str, str] | None = None,
     ) -> Prepared:
         cfg = self.s.config.get()
         model = str(body.get("model") or "aegis-chat")
@@ -170,11 +209,12 @@ class Pipeline:
             stream=bool(body.get("stream")),
             no_cache=no_cache,
             client=client,
-            root=telemetry.start_root(model, {}),
+            root=telemetry.start_root(model, {}, trace_headers),
             trace_id="",
             started=time.perf_counter(),
         )
         ctx.trace_id = telemetry.trace_id_of(ctx.root)
+        logcontext.bind(request_id=ctx.id, trace_id=ctx.trace_id)
         ctx.root.set_attributes(
             {"aegis.request_id": ctx.id, "aegis.client": client, "aegis.no_cache": no_cache}
         )
@@ -192,9 +232,61 @@ class Pipeline:
             trace_id=ctx.trace_id,
         )
         try:
-            return await self._run(ctx, cfg, body, api_key, preview)
+            prepared = await self._run(ctx, cfg, body, api_key, preview, client_ip)
         except GatewayError as err:
             return self._fail(ctx, cfg, err)
+        except asyncio.CancelledError:
+            # the client left before the first token (a WebSocket cancel, a disconnect): settle
+            # the rate-limit reservation, end the trace and record it, then let the cancel through
+            self._client_left(ctx, cfg, "before the first token")
+            raise
+        except Exception as exc:  # a bug must still produce a recorded, traced 500
+            request_log.exception("unexpected error in the request path")
+            return self._fail(
+                ctx, cfg, GatewayError(500, "internal", f"internal error: {type(exc).__name__}")
+            )
+        if prepared.events is not None and prepared.abandon is None:
+            prepared.events, prepared.abandon = self._track(ctx, cfg, prepared.events)
+        return prepared
+
+    def _client_left(
+        self, ctx: RequestContext, cfg: GatewayConfig, when: str, routed: Routed | None = None
+    ) -> None:
+        self._finish(
+            ctx,
+            cfg,
+            status="error",
+            http_status=499,
+            backend=routed.attempt.rt.name if routed else None,
+            cache="miss",
+            content="",
+            usage=None,
+            error=f"client_closed: left {when}",
+            routed=routed,
+        )
+
+    def _track(
+        self,
+        ctx: RequestContext,
+        cfg: GatewayConfig,
+        events: AsyncIterator[tuple[str, dict[str, Any]]],
+    ) -> tuple[AsyncIterator[tuple[str, dict[str, Any]]], Callable[[], Awaitable[None]]]:
+        """Cache replays and coalesced followers: record the request if it is never streamed."""
+        started = False
+
+        async def tracked() -> AsyncIterator[tuple[str, dict[str, Any]]]:
+            nonlocal started
+            started = True
+            async for item in events:
+                yield item
+
+        async def abandon() -> None:
+            nonlocal started
+            if not started:
+                started = True
+                self._client_left(ctx, cfg, "before the stream started")
+
+        return tracked(), abandon
 
     def _fail(self, ctx: RequestContext, cfg: GatewayConfig, err: GatewayError) -> Prepared:
         headers = self._base_headers(ctx)
@@ -234,21 +326,78 @@ class Pipeline:
         body: dict[str, Any],
         api_key: str | None,
         preview: str,
+        client_ip: str | None = None,
     ) -> Prepared:
+        """The request path, one stage per line. A stage stops the request by raising a
+        GatewayError; each stage is a span, emits enter/exit events and records its outcome."""
+        await self._authenticate(ctx, cfg, api_key, preview, client_ip)
+        messages = self._validate(ctx, cfg, body)
+        await self._guard(ctx, messages)
+        ctx.params = cfg.effective_params(ctx.model, body)
+        ctx.prompt_tokens_est = estimate_messages(ctx.messages) + estimate_tools(
+            ctx.params.get("tools")
+        )
+        await self._rate_limit(ctx)
+        await self._check_budget(ctx)
+        keys = build_keys(
+            ctx.tenant, ctx.model, ctx.messages, ctx.params, cfg.cache.semantic_max_tokens
+        )
+        hit, vector = await self._lookup_caches(ctx, cfg, keys)
+        if hit is not None:
+            return self._serve_cached(ctx, cfg, hit)
+        flight, leader = await self._coalesce(ctx, keys)
+        if not leader:
+            return await self._follow(ctx, cfg, flight)
+        routed = await self._check_and_route(ctx, cfg, flight)
+        return self._start_stream(ctx, cfg, routed, flight, keys, vector)
+
+    # ------------------------------------------------------------------ stages
+
+    async def _authenticate(
+        self,
+        ctx: RequestContext,
+        cfg: GatewayConfig,
+        api_key: str | None,
+        preview: str,
+        client_ip: str | None = None,
+    ) -> None:
         s = self.s
+        wait = s.auth_failures.retry_after(client_ip)
+        if wait:
+            raise GatewayError(
+                429,
+                "too_many_auth_failures",
+                "Too many failed authentications from this address. Retry later.",
+                outcome="rejected",
+                retry_after=wait,
+            )
         # -- auth
         async with self._stage(ctx, "auth") as rec:
-            key_cfg = cfg.keys.get(api_key or "")
+            key_cfg = security.resolve_credential(self.s.settings, cfg, api_key)
             if key_cfg is None:
                 rec["outcome"] = "rejected"
+                if api_key:
+                    s.auth_failures.record(client_ip)
                 raise GatewayError(
                     401, "invalid_api_key", "Unknown or missing API key.", outcome="rejected"
                 )
-            ctx.api_key, ctx.tenant, ctx.tpm = api_key or "", key_cfg.tenant, key_cfg.tpm
-            rec["data"]["tenant"] = ctx.tenant
-        ctx.root.set_attribute("aegis.tenant", ctx.tenant)
+            ctx.key_id, ctx.key_cfg = key_cfg.id, key_cfg
+            ctx.tenant, ctx.tpm = key_cfg.tenant, key_cfg.tpm
+            rec["data"].update(tenant=ctx.tenant, key_id=ctx.key_id)
+        logcontext.bind(tenant=ctx.tenant)
+        ctx.root.set_attributes(
+            {
+                "aegis.tenant": ctx.tenant,
+                "aegis.key_id": ctx.key_id,
+                "langfuse.user.id": ctx.tenant,
+                "langfuse.trace.tags": [ctx.model, ctx.client],
+            }
+        )
         s.bus.publish("request.meta", ctx.id, tenant=ctx.tenant, preview=preview)
 
+    def _validate(
+        self, ctx: RequestContext, cfg: GatewayConfig, body: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         if ctx.model not in cfg.models:
             raise GatewayError(
                 404,
@@ -262,7 +411,12 @@ class Pipeline:
             or not all(isinstance(m, dict) for m in messages)
         ):
             raise GatewayError(400, "invalid_request", "`messages` must be a non-empty list.")
+        self._check_limits(cfg, body, messages)
+        return messages
 
+    async def _guard(self, ctx: RequestContext, messages: list[dict[str, Any]]) -> None:
+        """PII redaction and the prompt-injection check, before any cache, embedder or model."""
+        s = self.s
         # -- guardrails: PII redaction + prompt-injection check
         async with self._stage(ctx, "guardrails") as rec:
             outcome = await guardrails.check(messages)
@@ -290,13 +444,14 @@ class Pipeline:
                     entities=outcome.redactions,
                     preview=message_text(outcome.messages[-1])[:160],
                 )
-        ctx.params = cfg.effective_params(ctx.model, body)
-        ctx.prompt_tokens_est = estimate_messages(ctx.messages)
 
+    async def _rate_limit(self, ctx: RequestContext) -> None:
+        """Tokens per minute, per key: reserve prompt + max_tokens now, settle after."""
+        s = self.s
         # -- rate limit (tokens per minute, per key)
         reserve = ctx.prompt_tokens_est + int(ctx.params.get("max_tokens") or 512)
         async with self._stage(ctx, "ratelimit") as rec:
-            decision = await s.limiter.take(ctx.api_key, ctx.tpm, reserve, s.redis_ok)
+            decision = await s.limiter.take(ctx.key_id, ctx.tpm, reserve, s.redis_ok)
             rec["data"].update(
                 reserved=reserve, tokens_left=int(decision.tokens_left), store=decision.backend
             )
@@ -320,8 +475,12 @@ class Pipeline:
                 )
         ctx.reserved = reserve
 
+    async def _check_budget(self, ctx: RequestContext) -> None:
+        """Est. cloud-equivalent USD per tenant per month: warn at soft, block at hard."""
+        s = self.s
         # -- budget (est. cloud-equivalent USD per tenant per month)
-        key_cfg = cfg.keys[ctx.api_key]
+        key_cfg = ctx.key_cfg
+        assert key_cfg is not None
         async with self._stage(ctx, "budget") as rec:
             status = await s.budgets.status(
                 ctx.tenant, key_cfg.budget.soft, key_cfg.budget.hard, s.redis_ok
@@ -353,70 +512,87 @@ class Pipeline:
                     hard=status.hard,
                 )
 
-        keys = build_keys(
-            ctx.tenant, ctx.model, ctx.messages, ctx.params, cfg.cache.semantic_max_tokens
-        )
-        vector = None
+    async def _lookup_caches(
+        self, ctx: RequestContext, cfg: GatewayConfig, keys: CacheKeys
+    ) -> tuple[CachedCompletion | None, Any]:
+        """Exact, then semantic. Returns the hit (if any) and the query vector, which the cache
+        write reuses after a miss."""
+        s = self.s
         if ctx.no_cache:
             s.bus.publish("cache.bypass", ctx.id, reason="Cache-Control: no-cache")
-        else:
-            # -- exact cache
-            async with self._stage(ctx, "exact_cache") as rec:
-                hit = None
-                if s.redis_ok:
-                    try:
-                        hit = await s.cache.get_exact(keys.exact)
-                    except Exception as exc:
-                        rec["outcome"] = "skipped"
-                        rec["data"]["error"] = type(exc).__name__
-                else:
-                    rec["outcome"] = "skipped"
-                if hit is not None:
-                    rec["outcome"] = "hit"
+            return None, None
+        hit = await self._exact_lookup(ctx, keys)
+        if hit is not None:
+            return hit, None
+        vector = None
+        if keys.last_user and s.redis_ok and s.cache.index_ready:
+            hit, vector = await self._semantic_lookup(ctx, cfg, keys)
             if hit is not None:
-                return self._serve_cached(ctx, cfg, hit)
+                return hit, vector
+        elif keys.last_user is None:
+            s.bus.publish(
+                "cache.semantic_ineligible",
+                ctx.id,
+                reason="last message is long (RAG-style) or not from the user",
+            )
+        s.bus.publish("cache.miss", ctx.id, best_similarity=ctx.similarity)
+        return None, vector
 
-            # -- semantic cache
-            if keys.last_user and s.redis_ok and s.cache.index_ready:
-                async with self._stage(ctx, "semantic_cache") as rec:
-                    async with self._stage(ctx, "embedder") as erec:
-                        budget_s = cfg.cache.embed_budget_ms / 1000
-                        try:
-                            vector = await asyncio.wait_for(
-                                s.embedder.embed_one(keys.last_user), budget_s
-                            )
-                        except TimeoutError:
-                            erec["outcome"] = "skipped"
-                            erec["data"]["reason"] = (
-                                f"embedder over {cfg.cache.embed_budget_ms} ms budget"
-                            )
-                    hit = None
-                    if vector is not None:
-                        try:
-                            hit, best = await s.cache.get_semantic(
-                                keys.partition, vector, cfg.cache.semantic_threshold
-                            )
-                            if best is not None:
-                                rec["data"]["best_similarity"] = round(best, 4)
-                                ctx.similarity = round(best, 4)
-                        except Exception as exc:
-                            rec["outcome"] = "skipped"
-                            rec["data"]["error"] = type(exc).__name__
-                    else:
-                        rec["outcome"] = "skipped"
-                    rec["data"]["threshold"] = cfg.cache.semantic_threshold
-                    if hit is not None:
-                        rec["outcome"] = "hit"
-                if hit is not None:
-                    return self._serve_cached(ctx, cfg, hit)
-            elif keys.last_user is None:
-                s.bus.publish(
-                    "cache.semantic_ineligible",
-                    ctx.id,
-                    reason="last message is long (RAG-style) or not from the user",
+    async def _exact_lookup(self, ctx: RequestContext, keys: CacheKeys) -> CachedCompletion | None:
+        s = self.s
+        hit = None
+        async with self._stage(ctx, "exact_cache") as rec:
+            if not s.redis_ok:
+                rec["outcome"] = "skipped"
+                return None
+            try:
+                hit = await s.cache.get_exact(keys.exact)
+            except Exception as exc:  # Redis trouble: skip the cache, never fail the request
+                rec["outcome"] = "skipped"
+                rec["data"]["error"] = type(exc).__name__
+            if hit is not None:
+                rec["outcome"] = "hit"
+        return hit
+
+    async def _embed(self, ctx: RequestContext, cfg: GatewayConfig, text: str) -> Any:
+        """The query vector, or None when the embedder is slower than its budget."""
+        async with self._stage(ctx, "embedder") as rec:
+            try:
+                return await asyncio.wait_for(
+                    self.s.embedder.embed_one(text), cfg.cache.embed_budget_ms / 1000
                 )
-            s.bus.publish("cache.miss", ctx.id, best_similarity=ctx.similarity)
+            except TimeoutError:
+                rec["outcome"] = "skipped"
+                rec["data"]["reason"] = f"embedder over {cfg.cache.embed_budget_ms} ms budget"
+                return None
 
+    async def _semantic_lookup(
+        self, ctx: RequestContext, cfg: GatewayConfig, keys: CacheKeys
+    ) -> tuple[CachedCompletion | None, Any]:
+        assert keys.last_user is not None
+        hit = None
+        async with self._stage(ctx, "semantic_cache") as rec:
+            vector = await self._embed(ctx, cfg, keys.last_user)
+            rec["data"]["threshold"] = cfg.cache.semantic_threshold
+            if vector is None:
+                rec["outcome"] = "skipped"
+                return None, None
+            try:
+                hit, best = await self.s.cache.get_semantic(
+                    keys.partition, vector, cfg.cache.semantic_threshold
+                )
+                if best is not None:
+                    rec["data"]["best_similarity"] = round(best, 4)
+                    ctx.similarity = round(best, 4)
+            except Exception as exc:  # Redis trouble: skip the cache, never fail the request
+                rec["outcome"] = "skipped"
+                rec["data"]["error"] = type(exc).__name__
+            if hit is not None:
+                rec["outcome"] = "hit"
+        return hit, vector
+
+    async def _coalesce(self, ctx: RequestContext, keys: CacheKeys) -> tuple[Flight, bool]:
+        s = self.s
         # -- coalescer
         async with self._stage(ctx, "coalescer") as rec:
             flight, leader = s.coalescer.join(keys.exact, ctx.id)
@@ -429,21 +605,27 @@ class Pipeline:
                     leader=flight.leader_id,
                     followers=len(flight.followers),
                 )
-        if not leader:
-            return await self._follow(ctx, cfg, flight)
+        return flight, leader
+
+    async def _check_and_route(
+        self, ctx: RequestContext, cfg: GatewayConfig, flight: Flight
+    ) -> Routed:
+        """The leader's last checks and the model call: content safety, then the router (slots,
+        breakers, hedging, chain retry). Any failure ends the flight so followers fail with it."""
+        s = self.s
+        # -- content safety (Llama Guard 3): leader only, so followers share one verdict
+        if cfg.safety.enabled:
+            try:
+                await self._safety_input(ctx, cfg)
+            except BaseException as exc:
+                await flight.finish(exc)
+                s.coalescer.release(flight)
+                raise
 
         # -- router (+ hedger) -> backend
         try:
             async with self._stage(ctx, "router") as rec:
-                routed = await s.router.route(
-                    config=cfg,
-                    model=ctx.model,
-                    payload={"messages": ctx.messages, **ctx.params},
-                    params=ctx.params,
-                    root=ctx.root,
-                    prompt_tokens=ctx.prompt_tokens_est,
-                    request_id=ctx.id,
-                )
+                routed = await self._route_with_retry(ctx, cfg, rec)
                 rec["data"].update(
                     backend=routed.attempt.rt.name,
                     ttft_ms=round(routed.ttft_ms, 1),
@@ -471,7 +653,18 @@ class Pipeline:
             await flight.finish(exc)
             s.coalescer.release(flight)
             raise
+        return routed
 
+    def _start_stream(
+        self,
+        ctx: RequestContext,
+        cfg: GatewayConfig,
+        routed: Routed,
+        flight: Flight,
+        keys: CacheKeys,
+        vector: Any,
+    ) -> Prepared:
+        s = self.s
         backend = routed.attempt.rt.name
         flight.info = {"backend": backend, "ttft_ms": routed.ttft_ms}
         flight.started.set()
@@ -484,7 +677,176 @@ class Pipeline:
                 "x-aegis-failovers": str(len(routed.failovers)),
             }
         )
-        return Prepared(200, headers, events=self._lead(ctx, cfg, routed, flight, keys, vector))
+        state = {"started": False}
+        events = self._lead(ctx, cfg, routed, flight, keys, vector, state)
+
+        async def abandon() -> None:
+            if state["started"]:
+                return  # the stream's own cleanup runs
+            state["started"] = True
+            task = routed.attempt.task
+            if task is not None and not task.done():
+                task.cancel()  # cuts the upstream call and frees the backend slot
+            await flight.finish(ConnectionAbortedError("the leader's client left"))
+            s.coalescer.release(flight)
+            self._client_left(ctx, cfg, "before the stream started", routed)
+
+        return Prepared(200, headers, events=events, abandon=abandon)
+
+    def _check_limits(
+        self, cfg: GatewayConfig, body: dict[str, Any], messages: list[dict[str, Any]]
+    ) -> None:
+        """Hard input bounds: cheap checks that run before any guardrail, cache or model."""
+        lim = cfg.limits
+        if len(messages) > lim.max_messages:
+            raise GatewayError(
+                400,
+                "too_many_messages",
+                f"{len(messages)} messages; the limit is {lim.max_messages}.",
+                outcome="rejected",
+            )
+        bad = sorted(
+            {
+                str(m.get("role"))
+                for m in messages
+                if not isinstance(m.get("role"), str) or m["role"] not in ROLES
+            }
+        )
+        if bad:
+            raise GatewayError(400, "invalid_request", f"Unknown message role(s): {bad}.")
+        for field_name in ("max_tokens", "max_completion_tokens"):
+            value = body.get(field_name)
+            if value is None:
+                continue
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise GatewayError(
+                    400, "invalid_request", f"`{field_name}` must be a positive integer."
+                )
+            if value > lim.max_output_tokens:
+                raise GatewayError(
+                    400,
+                    "max_tokens_too_large",
+                    f"`{field_name}` {value} is over this gateway's limit of "
+                    f"{lim.max_output_tokens}.",
+                    outcome="rejected",
+                )
+        tokens = estimate_messages(messages) + estimate_tools(body.get("tools"))
+        if tokens > lim.max_prompt_tokens:
+            raise GatewayError(
+                400,
+                "context_length_exceeded",
+                f"The prompt is about {tokens} tokens; the limit is {lim.max_prompt_tokens}.",
+                outcome="rejected",
+                extra={"prompt_tokens_est": tokens},
+            )
+
+    async def _safety_input(self, ctx: RequestContext, cfg: GatewayConfig) -> None:
+        sc = cfg.safety
+        async with self._stage(ctx, "safety") as rec:
+            v = await self.s.safety.classify(
+                sc.base_url, sc.model, ctx.messages, sc.timeout_ms / 1000, sc.unsafe_threshold
+            )
+            rec["data"].update(classifier_ms=round(v.ms, 1), classifier=sc.model)
+            if v.p_unsafe is not None:
+                rec["data"]["p_unsafe"] = round(v.p_unsafe, 3)
+            if v.borderline:
+                rec["outcome"] = "borderline"
+                rec["data"]["categories"] = ",".join(v.categories)
+                self.s.bus.publish(
+                    "safety.borderline", ctx.id, categories=v.labels, p_unsafe=v.p_unsafe
+                )
+            if v.error:
+                rec["outcome"] = "skipped"
+                rec["data"]["error"] = v.error
+                ctx.root.set_attribute("aegis.safety.input", "skipped")
+                self.s.bus.publish("safety.skipped", ctx.id, error=v.error, policy=sc.on_error)
+                if sc.on_error == "block":
+                    raise GatewayError(
+                        503,
+                        "safety_unavailable",
+                        "The content-safety classifier is unavailable and this gateway fails "
+                        "closed.",
+                        retry_after=5,
+                    )
+                return
+            ctx.root.set_attribute("aegis.safety.input", "safe" if v.safe else "unsafe")
+            if not v.safe:
+                rec["outcome"] = "blocked"
+                rec["data"]["categories"] = ",".join(v.categories)
+                self.s.bus.publish("safety.block", ctx.id, categories=v.labels)
+                raise GatewayError(
+                    400,
+                    "unsafe_content",
+                    "Blocked by the content-safety guardrail (Llama Guard 3).",
+                    outcome="blocked",
+                    extra={"categories": v.labels},
+                )
+
+    async def _route_with_retry(
+        self, ctx: RequestContext, cfg: GatewayConfig, rec: dict[str, Any]
+    ) -> Routed:
+        """Route; when every backend failed (not merely open breakers), back off and retry the
+        chain, never past the queue deadline."""
+        rc = cfg.router
+        deadline = time.monotonic() + rc.queue_deadline_seconds
+        attempt = 0
+        while True:
+            try:
+                return await self.s.router.route(
+                    config=cfg,
+                    model=ctx.model,
+                    payload={"messages": ctx.messages, **ctx.params},
+                    params=ctx.params,
+                    root=ctx.root,
+                    prompt_tokens=ctx.prompt_tokens_est,
+                    request_id=ctx.id,
+                )
+            except NoBackendAvailable as exc:
+                if attempt >= rc.chain_retries or not exc.failovers:
+                    raise
+                delay = full_jitter(attempt, rc.retry_base_ms / 1000, rc.retry_cap_ms / 1000)
+                if time.monotonic() + delay >= deadline:
+                    raise
+                attempt += 1
+                rec["data"]["chain_retries"] = attempt
+                self.s.bus.publish(
+                    "router.retry",
+                    ctx.id,
+                    attempt=attempt,
+                    delay_ms=round(delay * 1000, 1),
+                    reason=str(exc),
+                )
+                await asyncio.sleep(delay)
+
+    def _checked_cache_put(
+        self,
+        ctx: RequestContext,
+        cfg: GatewayConfig,
+        content: str,
+        keys: CacheKeys,
+        completion: CachedCompletion,
+        ttl: int,
+        vector: Any,
+    ) -> Any:
+        """Output safety, off the request path: an answer enters the cache only once Llama Guard
+        has classified the (prompt, answer) pair as safe, so an unsafe answer is never replayed."""
+        s, sc = self.s, cfg.safety
+        convo = [*ctx.messages, {"role": "assistant", "content": content}]
+
+        async def put() -> None:
+            v = await s.safety.classify(
+                sc.base_url, sc.model, convo, 2 * sc.timeout_ms / 1000, sc.unsafe_threshold
+            )
+            if not v.safe:
+                s.bus.publish("safety.output_flag", ctx.id, categories=v.labels)
+                return
+            if v.error:
+                s.bus.publish("safety.output_unchecked", ctx.id, error=v.error, policy=sc.on_error)
+                if sc.on_error == "block":
+                    return
+            await s.cache.put(keys, completion, ttl, vector)
+
+        return put
 
     # ------------------------------------------------------------------ streaming paths
 
@@ -496,31 +858,45 @@ class Pipeline:
         flight: Flight,
         keys: CacheKeys,
         vector: Any,
+        state: dict[str, bool],
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+        if state["started"]:
+            return  # abandoned before the first iteration: everything is already settled
+        state["started"] = True
         s = self.s
         backend = routed.attempt.rt.name
         parts: list[str] = []
         usage: dict[str, Any] | None = None
         finish: str | None = None
+        tool_calls = False
+        redactor = StreamRedactor() if cfg.output_guard.redact else None
         status, error = "ok", None
         s.bus.publish("stage.enter", ctx.id, stage="relay")
         relay_span = telemetry.tracer().start_span(
             "aegis.relay",
-            context=telemetry.trace.set_span_in_context(ctx.root),
+            context=trace.set_span_in_context(ctx.root),
             attributes={"aegis.stage": "relay", "aegis.backend": backend},
         )
         t0 = time.perf_counter()
         try:
-            async for chunk in s.router.relay(routed):
-                if chunk.get("usage"):
-                    usage = chunk["usage"]
+            async for raw in s.router.relay(routed):
+                if raw.get("usage"):
+                    usage = raw["usage"]
+                chunk = _redact_chunk(raw, redactor) if redactor is not None else raw
                 text, fin = _delta_content(chunk)
                 parts.append(text)
                 finish = fin or finish
+                tool_calls = tool_calls or _has_tool_calls(chunk)
                 out = {**chunk, "id": ctx.id, "model": ctx.model}
                 await flight.push(out)
                 if chunk.get("choices"):
                     yield "chunk", out
+            if redactor is not None and (tail := redactor.flush()):
+                # the stream ended without a finish chunk: release the held-back word
+                out = self._chunk(ctx, {"content": tail})
+                parts.append(tail)
+                await flight.push(out)
+                yield "chunk", out
             await flight.finish()
         except MidStreamError as exc:
             status, error = "midstream_error", str(exc)
@@ -562,8 +938,14 @@ class Pipeline:
                 usage=usage,
                 error=error,
                 routed=routed,
-                cache_write=(keys, vector) if status == "ok" and content else None,
+                # a tool call is an instruction to act on this conversation, not a reusable answer
+                cache_write=(keys, vector)
+                if status == "ok" and content and not tool_calls
+                else None,
                 finish_reason=finish,
+                extra={"output_redactions": redactor.counts}
+                if redactor is not None and redactor.counts
+                else None,
             )
         yield "summary", summary
 
@@ -736,7 +1118,7 @@ class Pipeline:
             "id": ctx.id,
             "ts": time.time(),
             "tenant": ctx.tenant,
-            "api_key": ctx.api_key,
+            "key_id": ctx.key_id,
             "model": ctx.model,
             "backend": backend,
             "status": status,
@@ -756,13 +1138,13 @@ class Pipeline:
             "error": error,
             "redactions": ctx.redactions or None,
         }
-        if ctx.api_key and http_status not in (401,):
+        if ctx.key_id and http_status not in (401,):
             s.ledger.record_request(record)
 
         # Settle the rate limit to what the backends actually processed; charge the budget.
         if ctx.reserved:
             delta = upstream_tokens - ctx.reserved
-            key, redis_ok = ctx.api_key, s.redis_ok
+            key, redis_ok = ctx.key_id, s.redis_ok
             s.recorder.submit(lambda: s.limiter.settle(key, delta, redis_ok))
         if cost > 0:
             tenant, redis_ok = ctx.tenant, s.redis_ok
@@ -781,7 +1163,12 @@ class Pipeline:
                 backend=backend or "?",
                 created=time.time(),
             )
-            s.recorder.submit(lambda: s.cache.put(keys, completion, ttl, vector))
+            if cfg.safety.enabled and cfg.safety.check_output:
+                s.recorder.submit(
+                    self._checked_cache_put(ctx, cfg, content, keys, completion, ttl, vector)
+                )
+            else:
+                s.recorder.submit(lambda: s.cache.put(keys, completion, ttl, vector))
             s.bus.publish("cache.write.queued", ctx.id, semantic=vector is not None)
         s.bus.publish("stage.enter", ctx.id, stage="ledger_queue")
         s.bus.publish("stage.exit", ctx.id, stage="ledger_queue", ms=0.0, outcome="queued")
@@ -793,7 +1180,7 @@ class Pipeline:
             "status": status,
             "http_status": http_status,
             "tenant": ctx.tenant,
-            "api_key": ctx.api_key,
+            "key_id": ctx.key_id,
             "model": ctx.model,
             "backend": backend,
             "cache": cache,
@@ -826,6 +1213,25 @@ class Pipeline:
             ctx.id,
             **{k: v for k, v in summary.items() if k not in ("request_id", "stages")},
         )
+        request_log.log(
+            logging.WARNING if status not in ("ok", "rejected", "blocked") else logging.INFO,
+            "request",
+            extra={
+                "status": status,
+                "http_status": http_status,
+                "model": ctx.model,
+                "key_id": ctx.key_id or None,
+                "backend": backend,
+                "cache": cache,
+                "latency_ms": latency,
+                "ttft_ms": ttft,
+                "tokens_in": record["tokens_in"],
+                "tokens_out": tokens_out,
+                "cost_est_usd": record["cost_est_usd"],
+                "failovers": record["failovers"],
+                "error": error,
+            },
+        )
         root = ctx.root
         root.set_attributes(
             telemetry._clean(
@@ -851,6 +1257,11 @@ class Pipeline:
                     "gen_ai.response.model": routed.attempt.rt.backend.upstream_model,
                     "gen_ai.usage.input_tokens": tokens_in,
                     "gen_ai.usage.output_tokens": tokens_out,
+                    "gen_ai.usage.cost": record["cost_est_usd"],
+                    "langfuse.observation.metadata.cost_label": COST_LABEL,
+                    "langfuse.observation.metadata.usage_estimated": bool(
+                        record["usage_estimated"]
+                    ),
                     "gen_ai.response.finish_reasons": [
                         finish_reason or ("error" if error else "stop")
                     ],

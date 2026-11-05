@@ -41,10 +41,15 @@ async def serve(app: Any, port: int) -> tuple[uvicorn.Server, asyncio.Task[None]
         uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", lifespan="on")
     )
     task = asyncio.get_running_loop().create_task(server.serve())
-    for _ in range(200):
-        if server.started:
+    # startup loads the embedder and builds the docs index: seconds on a laptop, longer on a
+    # shared CI runner, so wait up to a minute and say so if it never comes up
+    for _ in range(3000):
+        if server.started or task.done():
             break
         await asyncio.sleep(0.02)
+    if not server.started:
+        exc = task.exception() if task.done() else None
+        raise RuntimeError(f"test server on port {port} did not start: {exc!r}")
     return server, task
 
 
@@ -125,6 +130,22 @@ def write_config(tmp: Path, ports: dict[str, int], **overrides: Any) -> Path:
             "aegis-demo-key": {"tenant": "demo", "tpm": 100000, "budget": {"soft": 10, "hard": 20}},
             "k-small": {"tenant": "small", "tpm": 200, "budget": {"soft": 10, "hard": 20}},
             "k-broke": {"tenant": "broke", "tpm": 100000, "budget": {"soft": 0.0, "hard": 0.0}},
+            "k-other": {"tenant": "other", "tpm": 100000, "budget": {"soft": 10, "hard": 20}},
+            # the key the AEGIS assistant asks the gateway with
+            "aegis-assistant-key": {
+                "tenant": "aegis-bot",
+                "tpm": 100000,
+                "budget": {"soft": 10, "hard": 20},
+            },
+            # the key the built-in rate-limit flood sends with
+            "aegis-flood-key": {"tenant": "flood", "tpm": 300, "budget": {"soft": 10, "hard": 20}},
+            "k-admin": {
+                "id": "ops",
+                "tenant": "ops",
+                "tpm": 100000,
+                "budget": {"soft": 10, "hard": 20},
+                "role": "admin",
+            },
         },
         "cache": {
             "ttl_seconds": 60,
@@ -138,9 +159,16 @@ def write_config(tmp: Path, ports: dict[str, int], **overrides: Any) -> Path:
             "first_token_timeout_seconds": 1.5,
             "hedge_min_ms": 150,
             "hedge_default_ms": 400,
+            # off by default so breaker tests count exact errors; the retry tests turn it on
+            "chain_retries": 0,
+            "retry_base_ms": 50,
+            "retry_cap_ms": 200,
         },
         "breaker": {"error_threshold": 3, "open_seconds": 30},
         "chaos": {"auto_revert_seconds": 30},
+        "limits": {},
+        "safety": {"enabled": False},
+        "output_guard": {"redact": True},
     }
     for key, value in overrides.items():
         section, _, field = key.partition("__")
@@ -207,10 +235,15 @@ async def gateway(
 ) -> AsyncIterator[Gateway]:
     from aegis.main import create_app
 
-    overrides = getattr(request, "param", {})
+    overrides = dict(getattr(request, "param", {}))
     ports = {n: c.port for n, c in fakes.items()}  # type: ignore[attr-defined]
     port = free_port()
     settings = Settings(
+        env=overrides.pop("env", "dev"),  # the suite acts as the local operator unless a test says
+        admin_key=overrides.pop("admin_key", None),
+        # the test keys are plaintext; production's refusal of them has its own test
+        allow_plaintext_keys=overrides.pop("allow_plaintext_keys", True),
+        jwt_secret=overrides.pop("jwt_secret", "test-jwt-secret-0123456789abcdef0123"),
         config_path=write_config(tmp_path, ports, **overrides),
         redis_url=REDIS_URL,
         redis_prefix=f"aegistest-{uuid.uuid4().hex[:8]}",
@@ -229,6 +262,7 @@ async def gateway(
     telemetry.setup_tracing("aegis-test", None, exporter=spans)  # lifespan reset it
     async with httpx.AsyncClient(base_url=settings.self_url, timeout=20) as client:
         gw = Gateway(client, app, settings.self_url, spans)
+        gw.server, gw.task = server, task  # type: ignore[attr-defined]
         yield gw
     state = app.state.state
     with contextlib.suppress(Exception):

@@ -6,6 +6,9 @@ can be edited while the gateway runs.
 
 from __future__ import annotations
 
+import hashlib
+import os
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -24,6 +27,10 @@ class BackendConfig(BaseModel):
     process: str | None = None
     provider: str = "openai"
     api_key: str | None = None
+    # read the upstream credential from this environment variable instead of the YAML
+    api_key_env: str | None = None
+    # an optional backend being down does not degrade overall health (vLLM, the LiteLLM proxy)
+    optional: bool = False
     defaults: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -48,6 +55,39 @@ class KeyConfig(BaseModel):
     tenant: str
     tpm: int
     budget: Budget
+    # tenant: the data plane and read access to its own tenant's requests. admin: the control
+    # plane too (chaos, cache, budgets, every tenant's data).
+    role: Literal["tenant", "admin"] = "tenant"
+    # Public identifier, safe to log, store and show. Raw keys never leave aegis.security.
+    id: str = ""
+
+
+class LimitsConfig(BaseModel):
+    """Hard input bounds, checked before any guardrail, cache or model sees the request."""
+
+    max_body_bytes: int = 1_000_000
+    max_messages: int = 256
+    max_prompt_tokens: int = 16_000
+    max_output_tokens: int = 4096
+
+
+class SafetyConfig(BaseModel):
+    """Llama Guard 3 content safety (aegis/guardrails/safety.py)."""
+
+    enabled: bool = False
+    base_url: str = "http://127.0.0.1:11434/v1"
+    model: str = "llama-guard3:1b"
+    timeout_ms: int = 1500
+    on_error: Literal["allow", "block"] = "allow"
+    check_output: bool = True
+    # block only when the classifier's P(unsafe) reaches this (see guardrails/safety.py)
+    unsafe_threshold: float = Field(default=0.9, ge=0.5, le=1.0)
+
+
+class OutputGuardConfig(BaseModel):
+    """Streaming redaction of emails, phones, card numbers and secrets in model output."""
+
+    redact: bool = True
 
 
 class CacheConfig(BaseModel):
@@ -63,11 +103,19 @@ class RouterConfig(BaseModel):
     first_token_timeout_seconds: float = 15.0
     hedge_min_ms: float = 250.0
     hedge_default_ms: float = 2500.0
+    # When every backend in the chain fails before the first token, try the chain again after an
+    # exponential backoff with full jitter (AWS style), never past the queue deadline.
+    chain_retries: int = 1
+    retry_base_ms: float = 200.0
+    retry_cap_ms: float = 2000.0
 
 
 class BreakerConfig(BaseModel):
     error_threshold: int = 3
     open_seconds: float = 30.0
+    failure_rate: float = Field(default=0.5, gt=0.0, le=1.0)
+    window_seconds: float = 30.0
+    min_requests: int = 10
 
 
 class ChaosConfig(BaseModel):
@@ -82,6 +130,9 @@ class GatewayConfig(BaseModel):
     router: RouterConfig = Field(default_factory=RouterConfig)
     breaker: BreakerConfig = Field(default_factory=BreakerConfig)
     chaos: ChaosConfig = Field(default_factory=ChaosConfig)
+    limits: LimitsConfig = Field(default_factory=LimitsConfig)
+    safety: SafetyConfig = Field(default_factory=SafetyConfig)
+    output_guard: OutputGuardConfig = Field(default_factory=OutputGuardConfig)
 
     def model_post_init(self, _: Any) -> None:
         for name, backend in self.backends.items():
@@ -92,6 +143,27 @@ class GatewayConfig(BaseModel):
             unknown = [b for b in model.chain if b not in self.backends]
             if unknown:
                 raise ValueError(f"model {name!r} chains unknown backend(s): {unknown}")
+        seen: set[str] = set()
+        for entry, key in self.keys.items():
+            if not key.id:
+                raw = (
+                    entry[7:]
+                    if entry.startswith("sha256:")
+                    else hashlib.sha256(entry.encode()).hexdigest()
+                )
+                key.id = f"key_{raw[:10]}"
+            if key.id in seen:
+                raise ValueError(f"duplicate key id {key.id!r}")
+            seen.add(key.id)
+
+    def public_view(self) -> dict[str, Any]:
+        """The config without secrets: keys appear by id, backend credentials are masked."""
+        data = self.model_dump()
+        data["keys"] = {k.id: {**k.model_dump(), "id": k.id} for k in self.keys.values()}
+        for backend in data["backends"].values():
+            if backend.get("api_key"):
+                backend["api_key"] = "***"
+        return data
 
     def effective_params(self, model: str, request: dict[str, Any]) -> dict[str, Any]:
         """The sampling parameters the request will actually run with: what the client sent,
@@ -100,6 +172,9 @@ class GatewayConfig(BaseModel):
         chain = self.models[model].chain
         defaults = self.backends[chain[0]].defaults if chain else {}
         params: dict[str, Any] = {}
+        # OpenAI's newer name for the output cap: one canonical field, understood by every backend
+        if request.get("max_tokens") is None and request.get("max_completion_tokens") is not None:
+            request = {**request, "max_tokens": request["max_completion_tokens"]}
         for key in (
             "temperature",
             "top_p",
@@ -108,18 +183,44 @@ class GatewayConfig(BaseModel):
             "seed",
             "presence_penalty",
             "frequency_penalty",
+            # native tool calling and structured output pass through to the backend, and are part
+            # of the cache key: the same question with different tools is a different request
+            "tools",
+            "tool_choice",
+            "parallel_tool_calls",
+            "response_format",
         ):
             value = request.get(key)
             if value is None:
                 value = defaults.get(key)
             if value is not None:
                 params[key] = value
+        # every request runs with an output cap, even on a backend with no default
+        params.setdefault("max_tokens", self.limits.max_output_tokens)
         return params
 
 
+_ENV_REF = re.compile(r"\$\{([A-Z0-9_]+)(?::-([^}]*))?\}")
+
+
+def expand_env(text: str) -> str:
+    """`${NAME}` and `${NAME:-default}` in the YAML read the environment, so one file serves a
+    laptop (127.0.0.1) and a container (host.docker.internal) alike. An unset name with no
+    default is an error, never a silent empty string."""
+
+    def sub(m: re.Match[str]) -> str:
+        value = os.environ.get(m.group(1))
+        if value is not None:
+            return value
+        if m.group(2) is not None:
+            return m.group(2)
+        raise ValueError(f"config refers to ${{{m.group(1)}}}, which is not set")
+
+    return _ENV_REF.sub(sub, text)
+
+
 def load_config(path: Path) -> GatewayConfig:
-    with path.open() as fh:
-        data = yaml.safe_load(fh)
+    data = yaml.safe_load(expand_env(path.read_text()))
     return GatewayConfig.model_validate(data)
 
 

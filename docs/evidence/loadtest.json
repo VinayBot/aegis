@@ -1,0 +1,63 @@
+{
+  "run_id": 1793826031,
+  "phases": [
+    {
+      "phase": "overhead (cache hits)",
+      "requests": 60,
+      "concurrency": 12,
+      "wall_s": 0.26,
+      "throughput_rps": 232.88,
+      "errors": 0,
+      "status": {
+        "200": 60
+      },
+      "cache": {
+        "hit": 60
+      },
+      "backends": {
+        "cache (mlx-qwen)": 60
+      },
+      "latency_ms": {
+        "p50": 48.4,
+        "p95": 77.2,
+        "p99": 78.2,
+        "mean": 49.3
+      },
+      "ttft_ms": {
+        "p50": 48.0,
+        "p95": 76.9
+      }
+    },
+    {
+      "phase": "mixed workload",
+      "requests": 120,
+      "concurrency": 12,
+      "wall_s": 6.51,
+      "throughput_rps": 18.43,
+      "errors": 0,
+      "status": {
+        "200": 120
+      },
+      "cache": {
+        "miss": 18,
+        "coalesced": 25,
+        "hit": 56,
+        "semantic": 21
+      },
+      "backends": {
+        "mlx-qwen": 43,
+        "cache (mlx-qwen)": 77
+      },
+      "latency_ms": {
+        "p50": 23.0,
+        "p95": 2529.1,
+        "p99": 2685.5,
+        "mean": 566.6
+      },
+      "ttft_ms": {
+        "p50": 22.6,
+        "p95": 1673.3
+      }
+    }
+  ]
+}
