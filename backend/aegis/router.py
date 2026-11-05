@@ -30,6 +30,7 @@ from aegis import telemetry
 from aegis.backends.base import FAILOVER_KINDS, Backend, BackendError
 from aegis.breaker import Breaker
 from aegis.config import BackendConfig, GatewayConfig
+from aegis.engine import EngineStats
 from aegis.events import EventBus
 
 
@@ -73,6 +74,7 @@ class BackendRuntime:
     in_flight: int = 0
     ttft_ms: deque[float] = field(default_factory=lambda: deque(maxlen=40))
     last_token_at: float = 0.0
+    engine: EngineStats | None = None  # what the serving engine reports about itself
     counters: dict[str, int] = field(
         default_factory=lambda: {
             "attempts": 0,
@@ -92,6 +94,14 @@ class BackendRuntime:
     @property
     def name(self) -> str:
         return self.cfg.name
+
+    def saturated(self) -> bool:
+        """The engine itself reports a queue or a nearly full KV cache (fresh stats only)."""
+        e = self.engine
+        if e is None or not self.cfg.engine_metrics or not e.fresh():
+            return False
+        kv_full = e.kv_cache_usage is not None and e.kv_cache_usage >= self.cfg.saturation_kv
+        return e.waiting >= self.cfg.saturation_waiting or kv_full
 
     @property
     def free_slots(self) -> int:
@@ -235,7 +245,9 @@ class Router:
         while True:
             candidates = [self.runtimes[n] for n in chain if n not in tried and n in self.runtimes]
             open_ones = [rt for rt in candidates if not rt.breaker.available()]
-            usable = [rt for rt in candidates if rt.breaker.available()]
+            usable = self._load_aware(
+                [rt for rt in candidates if rt.breaker.available()], request_id
+            )
             if not usable:
                 retry = min((rt.breaker.retry_after() for rt in open_ones), default=5.0)
                 reason = "all breakers open" if open_ones and not tried else "every backend failed"
@@ -273,10 +285,18 @@ class Router:
                     failovers,
                 )
 
+    def _load_aware(self, usable: list[BackendRuntime], request_id: str) -> list[BackendRuntime]:
+        """Chain order, except that a backend whose engine reports saturation goes last."""
+        saturated = [rt for rt in usable if rt.saturated()]
+        for rt in saturated:
+            assert rt.engine is not None
+            self.bus.publish("engine.saturated", request_id, backend=rt.name, **rt.engine.as_dict())
+        return [rt for rt in usable if not rt.saturated()] + saturated
+
     def _try_hedge_backend(self, chain: list[str], busy: set[str]) -> BackendRuntime | None:
         for name in chain:
             rt = self.runtimes.get(name)
-            if rt is None or name in busy or rt.free_slots == 0:
+            if rt is None or name in busy or rt.free_slots == 0 or rt.saturated():
                 continue
             if rt.breaker.current_state() != "closed":
                 continue

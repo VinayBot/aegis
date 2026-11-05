@@ -311,3 +311,13 @@ Redis singleflight) is in PRODUCTION_READINESS.md.
 Raw HTTP tests show the wire format; `tests/test_openai_sdk.py` shows the promise: the official
 `openai` client, pointed at the gateway with two settings, streams, receives tool calls, lists
 models and raises its own typed errors (`AuthenticationError`, `RateLimitError`...).
+
+## Route on what vLLM says about itself
+
+Gateway slots only count what the gateway sent. vLLM knows its real load: requests running and
+queued inside the engine, how full its paged KV cache is, how often its prefix cache hits. The
+health monitor reads vLLM's `/metrics` with each probe, Prometheus re-exports it
+(`aegis_engine_*`), the map shows it, and the router uses it: a backend that reports 4+ queued
+requests or a 95%-full KV cache is moved to the back of the chain for new requests (and is not
+used as a hedge target), so traffic spills before latency climbs. It is never dropped: alone, it
+still serves. Stats older than 5 s are ignored, and a missed read keeps the last ones.

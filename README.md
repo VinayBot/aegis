@@ -25,7 +25,7 @@ and events.
 | [docs/PEER_AUDIT.md](docs/PEER_AUDIT.md) | 27 findings, how each was found and fixed |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | why each choice was made, and what was rejected |
 | [docs/evidence/](docs/evidence/) | Langfuse screenshots, load test, serving benchmark |
-| CI on the latest commit | lint, strict types, 174 tests (92% coverage), eval gate, audits, image smoke test, alert tests, CodeQL |
+| CI on the latest commit | lint, strict types, 179 tests (92% coverage), eval gate, audits, image smoke test, alert tests, CodeQL |
 
 ## Week 5 coverage
 
@@ -35,7 +35,7 @@ and events.
 | 21 | Rate limiting | Lua token bucket per key, refunds, 429 + Retry-After ([ratelimit.py](backend/aegis/ratelimit.py)) | `test_rate_limit_*`; "Rate-limit flood" |
 | 21 | Cost tracking | Per-request est. cloud cost and savings, tenant budgets ([ledger.py](backend/aegis/ledger.py), [budget.py](backend/aegis/budget.py)), Langfuse cost per generation | `test_hard_budget_blocks`; Control Room |
 | 21 | Streaming | SSE relay from an async generator, OpenAI chunk format; verified with the official OpenAI Python SDK | `tests/test_openai_sdk.py`; `scripts/demo_stream.sh` |
-| 22 | vLLM local deployment | Real `vllm serve` (V1 engine, paged attention, continuous batching) via vllm-metal, model `aegis-vllm` | [Batching benchmark](docs/evidence/serving_bench.json): 249 → 1,036 tok/s from 1 to 8 concurrent requests (`make bench-serving`) |
+| 22 | vLLM local deployment | Real `vllm serve` (V1 engine, paged attention, continuous batching) via vllm-metal, model `aegis-vllm`; the gateway reads vLLM's own `/metrics` (queue, KV cache, prefix-cache hits) and routes around a saturated engine ([engine.py](backend/aegis/engine.py)) | [Batching benchmark](docs/evidence/serving_bench.json): 249 → 1,036 tok/s from 1 to 8 concurrent requests (`make bench-serving`) |
 | 22 | Langfuse tracing | OTLP + Basic auth to Langfuse beside Jaeger, with Langfuse trace/user/generation attributes ([telemetry.py](backend/aegis/telemetry.py)); user feedback ratings as Langfuse scores (`POST /v1/feedback`, [feedback.py](backend/aegis/feedback.py)); self-hosted stack in [infra/langfuse](infra/langfuse/docker-compose.yml) | Verified on Langfuse 4.67.0: [traces](docs/evidence/langfuse-traces.png), [one trace](docs/evidence/langfuse-trace.png); `test_feedback_becomes_a_langfuse_score` |
 | 22 | OpenTelemetry | One trace per request, one span per stage, GenAI semantic conventions, W3C `traceparent` propagation from callers; Prometheus `/metrics` ([prom.py](backend/aegis/prom.py)) with SLO burn-rate alerts ([alerts.yml](infra/prometheus/alerts.yml), unit-tested with promtool) | Traces tab; `test_a_callers_traceparent_continues_into_the_gateway`; `make alerts` |
 | 23 | Semantic cache (Redis) | Redis Stack HNSW, bge-small, threshold 0.95, partitioned by tenant and context ([cache.py](backend/aegis/cache.py)) | Eval: precision 1.0, recall 1.0 on 30 labelled pairs |
@@ -76,7 +76,7 @@ Other targets:
 
 | Target | What it does |
 | --- | --- |
-| `make test` | backend (174, including property-based and OpenAI SDK) and frontend tests; needs `make infra` for Redis |
+| `make test` | backend (179, including property-based and OpenAI SDK) and frontend tests; needs `make infra` for Redis |
 | `make evals` / `make evals-live` | the evaluation gate (offline / with Llama Guard) |
 | `make e2e` | 21 browser tests against `make dev` |
 | `make loadtest` | throughput and latency percentiles against `make dev` |

@@ -41,6 +41,9 @@ export interface ArchNode {
   stats: Record<string, number | null>;
   config?: Record<string, unknown>;
   breaker?: { state: BreakerState; retry_after_s: number; open_seconds: number; trips: number; window_failure_rate?: number | null; failure_rate_threshold?: number };
+  /** what the serving engine reports about itself (vLLM /metrics) */
+  engine?: { running: number; waiting: number; kv_cache_usage: number | null; prefix_cache_hit_rate: number | null } | null;
+  saturated?: boolean;
   slots?: { capacity: number; in_flight: number } | null;
 }
 

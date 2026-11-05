@@ -1,5 +1,7 @@
 # Weekly dependency updates, minor and patch grouped into one reviewable PR per ecosystem.
-# LiteLLM is pinned on purpose (supply-chain incident, see docs/DECISIONS.md): bumped by hand.
+# Runtime and toolchain majors (Python, Node, TypeScript) are planned upgrades, not weekly bumps:
+# they are ignored here and done in their own branch with the full test run. LiteLLM is pinned on
+# purpose (supply-chain incident, see docs/DECISIONS.md) and bumped by hand.
 version: 2
 updates:
   - package-ecosystem: uv
@@ -14,9 +16,18 @@ updates:
     schedule: { interval: weekly }
     groups:
       frontend: { patterns: ["*"], update-types: [minor, patch] }
+    ignore:
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
   - package-ecosystem: docker
     directory: /
     schedule: { interval: weekly }
+    ignore:
+      # python:3.12 -> 3.15 and node:22 -> 26 change the runtime: planned upgrades only
+      - dependency-name: python
+        update-types: [version-update:semver-major, version-update:semver-minor]
+      - dependency-name: node
+        update-types: [version-update:semver-major]
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }

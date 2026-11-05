@@ -157,7 +157,7 @@ test("architecture: clicking a node opens its live details, Close dismisses them
 
 test("docs: links between documents open inside the site", async ({ page }) => {
   await page.goto("/docs/README.md");
-  await page.locator(".prose-aegis").getByRole("link", { name: "docs/DECISIONS.md" }).click();
+  await page.locator(".prose-aegis").getByRole("link", { name: "docs/DECISIONS.md" }).first().click();
   await expect(page).toHaveURL(/\/docs\/DECISIONS\.md$/);
   await expect(page.locator(".prose-aegis .doc-title")).toContainText("Decisions");
 });

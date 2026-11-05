@@ -56,6 +56,9 @@ backends:
     slots: 8                         # continuous batching: many requests share each forward pass
     provider: vllm
     optional: true
+    engine_metrics: true             # read vLLM's /metrics: queue, KV cache, prefix-cache hits
+    saturation_waiting: 4            # route new requests elsewhere first when vLLM queues this many
+    saturation_kv: 0.95              # ...or its paged KV cache is this full
     defaults: {temperature: 1.0, top_p: 1.0, max_tokens: 512}   # vLLM defaults (this snapshot ships no generation_config)
 
   # vllm-gpu:                        # vLLM on a GPU box is this one entry

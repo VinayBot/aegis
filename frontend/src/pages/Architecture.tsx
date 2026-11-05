@@ -158,6 +158,17 @@ function Drawer({ node, onClose }: { node: ArchNode; onClose: () => void }) {
             </dd>
           </div>
         )}
+        {node.engine && (
+          <div>
+            <dt className="text-ink-mute">engine (vLLM)</dt>
+            <dd className="font-semibold text-ink">
+              {node.engine.running} running · {node.engine.waiting} queued
+              {node.engine.kv_cache_usage != null && ` · KV cache ${Math.round(node.engine.kv_cache_usage * 100)}%`}
+              {node.engine.prefix_cache_hit_rate != null && ` · prefix cache ${Math.round(node.engine.prefix_cache_hit_rate * 100)}% hits`}
+              {node.saturated && <span className="text-amber"> · saturated: new requests go to the next backend first</span>}
+            </dd>
+          </div>
+        )}
       </dl>
       {node.config && (
         <>

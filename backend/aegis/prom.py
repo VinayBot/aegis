@@ -120,6 +120,15 @@ class PromMetrics:
         self.slots = Gauge(
             "aegis_backend_slots", "Backend concurrency slots.", ["backend"], registry=r
         )
+        engine = [
+            ("aegis_engine_requests_running", "Requests the engine reports running (vLLM)."),
+            ("aegis_engine_requests_waiting", "Requests queued inside the engine (vLLM)."),
+            ("aegis_engine_kv_cache_usage", "Share of the engine's paged KV cache in use (vLLM)."),
+            ("aegis_engine_prefix_cache_hit_rate", "Engine prefix-cache hit rate since start."),
+        ]
+        self.engine_running, self.engine_waiting, self.engine_kv, self.engine_prefix = (
+            Gauge(name, doc, ["backend"], registry=r) for name, doc in engine
+        )
         self._task: asyncio.Task[None] | None = None
 
     # ----------------------------------------------------------------- events -> series
@@ -183,9 +192,20 @@ class PromMetrics:
 
     # ----------------------------------------------------------------- scrape
 
+    def _engine(self, name: str, e: Any) -> None:
+        if e is None or not e.fresh():
+            return
+        self.engine_running.labels(name).set(e.running)
+        self.engine_waiting.labels(name).set(e.waiting)
+        if e.kv_cache_usage is not None:
+            self.engine_kv.labels(name).set(e.kv_cache_usage)
+        if e.prefix_cache_hit_rate is not None:
+            self.engine_prefix.labels(name).set(e.prefix_cache_hit_rate)
+
     def render(self, runtimes: dict[str, Any]) -> bytes:
         for name, rt in runtimes.items():
             self.breaker.labels(name).set(BREAKER_VALUE.get(rt.breaker.current_state(), -1))
             self.in_flight.labels(name).set(rt.in_flight)
             self.slots.labels(name).set(rt.capacity)
+            self._engine(name, rt.engine)
         return generate_latest(self.registry)

@@ -21,6 +21,7 @@ from typing import Any
 import httpx
 
 from aegis.backends.base import BackendError
+from aegis.engine import scrape
 from aegis.router import BackendRuntime
 from aegis.state import AppState
 
@@ -135,8 +136,21 @@ class HealthMonitor:
             status = "degraded"
         if "not installed" in detail:
             status = "disabled"
+        engine = None
+        if ok and rt.cfg.engine_metrics and rt.cfg.base_url:
+            # a missed read keeps the last stats; they go stale by themselves after 5 s
+            rt.engine = await scrape(self._client, rt.cfg.base_url) or rt.engine
+            engine = rt.engine.as_dict() if rt.engine else None
         return _result(
-            ok, detail, ms, status, breaker=breaker, in_flight=rt.in_flight, capacity=rt.capacity
+            ok,
+            detail,
+            ms,
+            status,
+            breaker=breaker,
+            in_flight=rt.in_flight,
+            capacity=rt.capacity,
+            engine=engine,
+            saturated=rt.saturated(),
         )
 
     async def _probe_request(self, name: str, rt: BackendRuntime) -> None:
