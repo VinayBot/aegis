@@ -7,7 +7,7 @@
 # internet at start. Model servers stay on the host (PRAHARI_MODEL_HOST=host.docker.internal).
 
 # ---- 1. the website
-FROM node:22.22.3-bookworm-slim AS site
+FROM node:22.23.4-bookworm-slim AS site
 WORKDIR /site
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
