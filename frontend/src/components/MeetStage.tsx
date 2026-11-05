@@ -1,10 +1,10 @@
-// The "Meet AEGIS" stage, in deep space.
+// The "Meet PRAHARI" stage, in deep space.
 //   back:   a soft nebula glow and twinkling stars (the page's galaxy shows through)
 //   floor:  a holographic ring that matches the robot's own blue under-glow, with rising motes
 //   robot:  the cut-out robot floats, tilts toward the pointer, and its eyes follow the pointer
 //           (its own pupils are covered and redrawn so they can move, and blink)
 //   scan:   a hologram scan line sweeps over the robot's silhouette every few seconds
-//   bubble: a typewriter cycling questions; clicking one asks AEGIS for real
+//   bubble: a typewriter cycling questions; clicking one asks PRAHARI for real
 import { motion, useMotionValue, useSpring, useTransform } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import regions from "../config/robotRegions.json";
@@ -129,7 +129,7 @@ export default function MeetStage() {
             <source type="image/avif" srcSet={`${SRC}-380.avif 380w, ${SRC}-514.avif 514w`} sizes="(max-width: 900px) 45vw, 22vw" />
             <img src={`${SRC}-380.webp`} srcSet={`${SRC}-380.webp 380w, ${SRC}-514.webp 514w`} sizes="(max-width: 900px) 45vw, 22vw"
               width={MEET.width} height={MEET.height} loading="lazy" decoding="async" className="relative block h-auto w-full"
-              alt="AEGIS, a white robot with a large round helmet, a dark visor and two glowing cyan eye rings" />
+              alt="PRAHARI, a white robot with a large round helmet, a dark visor and two glowing cyan eye rings" />
           </picture>
           {/* hologram scan over the robot's silhouette only */}
           {live && <span aria-hidden="true" className="meet-scan" style={{ WebkitMaskImage: `url(${SRC}-380.webp)`, maskImage: `url(${SRC}-380.webp)` }} />}
@@ -158,7 +158,7 @@ export default function MeetStage() {
       </motion.div>
 
       <button type="button" onClick={() => open(full)} className="meet-bubble glass glass-strong glow-border is-live absolute left-[5%] top-[6%] max-w-[50%] px-4 py-3 text-left">
-        <span className="block text-[0.72rem] font-semibold text-cyan">Ask AEGIS</span>
+        <span className="block text-[0.72rem] font-semibold text-cyan">Ask PRAHARI</span>
         <span className="mt-1 block min-h-[2.6em] text-[0.98rem] leading-snug text-ink">
           {text}
           {live && <span className="meet-caret" aria-hidden="true" />}

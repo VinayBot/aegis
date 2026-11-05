@@ -1,4 +1,4 @@
-// Shapes served by the gateway's control plane (backend/aegis/api/control.py).
+// Shapes served by the gateway's control plane (backend/prahari/api/control.py).
 
 export type Status = "up" | "down" | "degraded" | "disabled" | "starting" | "unknown";
 export type BreakerState = "closed" | "open" | "half_open";

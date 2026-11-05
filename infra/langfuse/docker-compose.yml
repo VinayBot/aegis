@@ -1,21 +1,21 @@
-# Self-hosted Langfuse (v4) for AEGIS traces: `make langfuse-up`, UI at http://localhost:3100
-# (login admin@aegis.local / aegis-local-only). Adapted from the official compose file
+# Self-hosted Langfuse (v4) for PRAHARI traces: `make langfuse-up`, UI at http://localhost:3100
+# (login admin@prahari.local / prahari-local-only). Adapted from the official compose file
 # (github.com/langfuse/langfuse/blob/main/docker-compose.yml):
 # - images pinned (Langfuse 4.67.0, two weeks old when pinned);
 # - only the web UI is published, on 127.0.0.1:3100, so Langfuse's own Redis, Postgres, ClickHouse
-#   and MinIO never collide with AEGIS's Redis on 6379 or anything else on the host;
+#   and MinIO never collide with PRAHARI's Redis on 6379 or anything else on the host;
 # - headless initialisation creates the org, project and API keys, so no clicks are needed;
 # - telemetry off.
 # The gateway exports to it when started with
-#   AEGIS_LANGFUSE_HOST=http://localhost:3100 AEGIS_LANGFUSE_PUBLIC_KEY=pk-lf-aegis-local \
-#   AEGIS_LANGFUSE_SECRET_KEY=sk-lf-aegis-local
+#   PRAHARI_LANGFUSE_HOST=http://localhost:3100 PRAHARI_LANGFUSE_PUBLIC_KEY=pk-lf-prahari-local \
+#   PRAHARI_LANGFUSE_SECRET_KEY=sk-lf-prahari-local
 # Every credential below is a local-only placeholder: change all of them for any shared host.
 # Needs about 3-4 GB for the containers (ClickHouse is the large one): `colima start --memory 6`.
-name: aegis-langfuse
+name: prahari-langfuse
 
 x-langfuse-env: &langfuse-env
   DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
-  SALT: aegis-local-salt
+  SALT: prahari-local-salt
   ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
   TELEMETRY_ENABLED: "false"
   LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
@@ -40,7 +40,7 @@ x-langfuse-env: &langfuse-env
   LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
   REDIS_HOST: redis
   REDIS_PORT: "6379"
-  REDIS_AUTH: aegis-local-redis
+  REDIS_AUTH: prahari-local-redis
 
 services:
   langfuse-worker:
@@ -63,16 +63,16 @@ services:
     environment:
       <<: *langfuse-env
       NEXTAUTH_URL: http://localhost:3100
-      NEXTAUTH_SECRET: aegis-local-nextauth-secret
-      LANGFUSE_INIT_ORG_ID: aegis
-      LANGFUSE_INIT_ORG_NAME: AEGIS
-      LANGFUSE_INIT_PROJECT_ID: aegis-gateway
-      LANGFUSE_INIT_PROJECT_NAME: AEGIS gateway
-      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-aegis-local
-      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-aegis-local
-      LANGFUSE_INIT_USER_EMAIL: admin@aegis.local
-      LANGFUSE_INIT_USER_NAME: AEGIS admin
-      LANGFUSE_INIT_USER_PASSWORD: aegis-local-only
+      NEXTAUTH_SECRET: prahari-local-nextauth-secret
+      LANGFUSE_INIT_ORG_ID: prahari
+      LANGFUSE_INIT_ORG_NAME: PRAHARI
+      LANGFUSE_INIT_PROJECT_ID: prahari-gateway
+      LANGFUSE_INIT_PROJECT_NAME: PRAHARI gateway
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-prahari-local
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-prahari-local
+      LANGFUSE_INIT_USER_EMAIL: admin@prahari.local
+      LANGFUSE_INIT_USER_NAME: PRAHARI admin
+      LANGFUSE_INIT_USER_PASSWORD: prahari-local-only
 
   clickhouse:
     image: docker.io/clickhouse/clickhouse-server:26.3.62.3
@@ -110,9 +110,9 @@ services:
   redis:
     image: docker.io/redis:7.4.1
     restart: unless-stopped
-    command: --requirepass aegis-local-redis --maxmemory-policy noeviction
+    command: --requirepass prahari-local-redis --maxmemory-policy noeviction
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "aegis-local-redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "prahari-local-redis", "ping"]
       interval: 3s
       timeout: 10s
       retries: 10

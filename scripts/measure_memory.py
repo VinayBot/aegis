@@ -1,4 +1,4 @@
-"""Measures the real resident memory (RSS) of every AEGIS component on this Mac.
+"""Measures the real resident memory (RSS) of every PRAHARI component on this Mac.
 
 Processes are found by command line; Docker containers are measured inside the Colima VM with
 `docker stats`, and the VM's own reservation is reported separately.
@@ -12,7 +12,7 @@ import subprocess
 import psutil
 
 MATCH = {
-    "gateway (FastAPI + embedder + spaCy)": ["uvicorn", "aegis.main:app"],
+    "gateway (FastAPI + embedder + spaCy)": ["uvicorn", "prahari.main:app"],
     "mlx_lm.server (Qwen2.5-3B 4-bit)": ["mlx_lm.server"],
     "ollama (server + loaded llama3.2:3b)": ["ollama"],
     "vite dev server": ["vite"],

@@ -44,7 +44,7 @@ e2e: ## browser tests against the running system (`make dev` in another terminal
 	cd frontend && npm run e2e
 
 lint:
-	cd backend && uv run ruff check aegis tests
+	cd backend && uv run ruff check prahari tests
 	cd frontend && npm run lint
 
 typecheck:
@@ -55,7 +55,7 @@ build:
 	cd frontend && npm run build
 
 serve: build ## the built site served by the gateway itself on :8000
-	cd backend && AEGIS_ENV=dev AEGIS_CHAOS_ENABLED=1 uv run uvicorn aegis.main:app --port 8000
+	cd backend && PRAHARI_ENV=dev PRAHARI_CHAOS_ENABLED=1 uv run uvicorn prahari.main:app --port 8000
 
 record-fixture: ## record real traffic into the offline replay fixture (needs `make dev`)
 	cd backend && uv run python ../scripts/record_fixture.py
@@ -83,8 +83,8 @@ clean:
 
 langfuse-up: ## self-hosted Langfuse v4 on :3100 (needs ~4 GB in Docker: colima start --memory 6)
 	docker-compose -f infra/langfuse/docker-compose.yml up -d
-	@echo "Langfuse: http://localhost:3100 (admin@aegis.local / aegis-local-only). Start the gateway with:"
-	@echo "  AEGIS_LANGFUSE_HOST=http://localhost:3100 AEGIS_LANGFUSE_PUBLIC_KEY=pk-lf-aegis-local AEGIS_LANGFUSE_SECRET_KEY=sk-lf-aegis-local"
+	@echo "Langfuse: http://localhost:3100 (admin@prahari.local / prahari-local-only). Start the gateway with:"
+	@echo "  PRAHARI_LANGFUSE_HOST=http://localhost:3100 PRAHARI_LANGFUSE_PUBLIC_KEY=pk-lf-prahari-local PRAHARI_LANGFUSE_SECRET_KEY=sk-lf-prahari-local"
 
 langfuse-down:
 	docker-compose -f infra/langfuse/docker-compose.yml down
@@ -93,13 +93,13 @@ loadtest: ## throughput, latency and TTFT percentiles against `make dev` (writes
 	cd backend && uv run python ../scripts/loadtest.py --requests 120 --concurrency 12 --out ../docs/evidence/loadtest.json
 
 image: ## the production image (gateway + built site, non-root) and its smoke test
-	docker build -t aegis-gateway:local .
-	docker rm -f aegis-smoke >/dev/null 2>&1 || true
-	docker run -d --name aegis-smoke -p 127.0.0.1:8002:8000 aegis-gateway:local
+	docker build -t prahari-gateway:local .
+	docker rm -f prahari-smoke >/dev/null 2>&1 || true
+	docker run -d --name prahari-smoke -p 127.0.0.1:8002:8000 prahari-gateway:local
 	for i in $$(seq 1 60); do curl -fs http://127.0.0.1:8002/healthz && break; sleep 2; done
 	@test "$$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8002/api/architecture)" = 401 && echo " control plane refuses anonymous callers"
-	@test "$$(docker exec aegis-smoke id -u)" = 10001 && echo "runs as a non-root user"
-	docker rm -f aegis-smoke
+	@test "$$(docker exec prahari-smoke id -u)" = 10001 && echo "runs as a non-root user"
+	docker rm -f prahari-smoke
 
 bench-serving: ## vLLM vs MLX throughput at 1, 2, 4 and 8 concurrent requests (needs `make dev`)
 	cd backend && uv run python ../scripts/bench_serving.py --out ../docs/evidence/serving_bench.json
@@ -109,5 +109,5 @@ alerts: ## validate and unit-test the Prometheus alerting rules (promtool in Doc
 	docker run --rm -v "$(CURDIR)/infra/prometheus":/r -w /r --entrypoint promtool prom/prometheus:v2.55.1 test rules alerts_test.yml
 
 k8s: ## render the Kubernetes manifests and validate them strictly against the schemas
-	docker run --rm -v "$(CURDIR)/deploy/k8s":/k -w /k registry.k8s.io/kustomize/kustomize:v5.4.3 build . > /tmp/aegis-k8s.yaml
-	docker run --rm -v /tmp:/t ghcr.io/yannh/kubeconform:v0.6.7 -strict -summary /t/aegis-k8s.yaml
+	docker run --rm -v "$(CURDIR)/deploy/k8s":/k -w /k registry.k8s.io/kustomize/kustomize:v5.4.3 build . > /tmp/prahari-k8s.yaml
+	docker run --rm -v /tmp:/t ghcr.io/yannh/kubeconform:v0.6.7 -strict -summary /t/prahari-k8s.yaml

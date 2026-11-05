@@ -48,7 +48,7 @@ async def one(
     client: httpx.AsyncClient, url: str, key: str, prompt: str, no_cache: bool
 ) -> dict[str, Any]:
     body = {
-        "model": "aegis-chat",
+        "model": "prahari-chat",
         "stream": True,
         "temperature": 0,
         "max_tokens": 48,
@@ -69,7 +69,7 @@ async def one(
             return {
                 "status": resp.status_code,
                 "cache": resp.headers.get("x-cache", "?"),
-                "backend": resp.headers.get("x-aegis-backend", "?"),
+                "backend": resp.headers.get("x-prahari-backend", "?"),
                 "latency": time.perf_counter() - start,
                 "ttft": ttft,
             }
@@ -117,7 +117,7 @@ async def phase(
 async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://127.0.0.1:8000")
-    ap.add_argument("--key", default="aegis-demo-key")
+    ap.add_argument("--key", default="prahari-demo-key")
     ap.add_argument("--requests", type=int, default=120)
     ap.add_argument("--concurrency", type=int, default=12)
     ap.add_argument("--seed", type=int, default=7)

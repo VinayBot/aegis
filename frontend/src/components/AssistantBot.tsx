@@ -1,9 +1,9 @@
-// AEGIS, docked in the bottom-right corner on every page: a small 3D robot (scenes/Robot3D)
+// PRAHARI, docked in the bottom-right corner on every page: a small 3D robot (scenes/Robot3D)
 // hovering over a glowing pad. It never flies around the page.
 //   rest:   gentle hover, sleepy eyes, a bubble that cycles a few things to ask
 //   hover:  it perks up: eyes widen, head turns to you, a little wiggle
 //   click:  it wakes (eyes flash, thrusters burst, a hop) and the chat opens
-// Clicking a suggestion in the bubble asks AEGIS that question for real. With reduced motion it
+// Clicking a suggestion in the bubble asks PRAHARI that question for real. With reduced motion it
 // stays still and opens on click. Below laptop width it is smaller and the bubble is hidden, so it never
 // sits over content.
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
@@ -93,7 +93,7 @@ export default function AssistantBot({ open, onOpen }: { open: boolean; onOpen: 
         onPointerLeave={() => setHover(false)}
         onFocus={() => setHover(true)}
         onBlur={() => setHover(false)}
-        aria-label="Ask AEGIS about this project (press / or Ctrl+K)"
+        aria-label="Ask PRAHARI about this project (press / or Ctrl+K)"
         className="relative block cursor-pointer rounded-full focus-visible:outline-offset-4"
         style={{ width: W, height: H }}
       >

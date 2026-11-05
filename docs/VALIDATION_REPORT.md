@@ -22,7 +22,7 @@ mobile (target 85), and every scenario runs at 60 fps or more. Known limits:
 | Lint (frontend, bans `Math.random`) | `npx eslint src` | **pass** |
 | Frontend unit | `npm test` (vitest) | **8 passed**, including the `Math.random` guard |
 | End-to-end, real system, dev server | `make e2e` (Playwright) | **21 passed** |
-| End-to-end, production build served by the gateway | `AEGIS_SITE_URL=http://127.0.0.1:8000 npm run e2e` | 16 passed (2026-10-27) |
+| End-to-end, production build served by the gateway | `PRAHARI_SITE_URL=http://127.0.0.1:8000 npm run e2e` | 16 passed (2026-10-27) |
 | Production image | `make image` | **pass**: alive, 503 not ready without models, 401 anonymous admin, uid 10001, healthy |
 | Page sweep at 1440, 1280, 768 and 390 px | `make sweep` | **40 of 40 clean** |
 | Tab switching, dev and production | `node frontend/tools/tabs.mjs` | every tab fully shown in 0.1–0.3 s, never blank |
@@ -79,8 +79,8 @@ All 40 loads are clean. Two further checks also passed:
 | Batched ledger (correction 2) | background SQLite writer; ledger/cost endpoints in `test_control_plane_endpoints` | pass |
 | Cost shown as "est. cloud equivalent" (correction 3) | Control Room and Playground labels | pass |
 | OTel gen_ai spans to Jaeger | `test_every_stage_is_a_span_with_genai_conventions`; traces visible in Jaeger and the Traces page | pass |
-| Chaos endpoints dev-only | 403 unless `AEGIS_CHAOS_ENABLED=1` (`aegis/chaos.py`, `api/control.py`) | pass |
-| LiteLLM optional adapter | `litellm==1.80.0` installed by `make setup` (pinned below the compromised 1.82.7/1.82.8 releases); `aegis-litellm` streams and returns usage through the gateway; e2e test; the gateway still runs without it | pass |
+| Chaos endpoints dev-only | 403 unless `PRAHARI_CHAOS_ENABLED=1` (`prahari/chaos.py`, `api/control.py`) | pass |
+| LiteLLM optional adapter | `litellm==1.80.0` installed by `make setup` (pinned below the compromised 1.82.7/1.82.8 releases); `prahari-litellm` streams and returns usage through the gateway; e2e test; the gateway still runs without it | pass |
 
 ## Site criteria
 
@@ -120,7 +120,7 @@ and the charts are what those pages are for).
 | --- | --- | --- | --- |
 | Home: hero idle | 120 | 9.0 ms | 0 / 479 |
 | Home: scroll through the neuron dive | 118 | 9.1 ms | 1 / 628 |
-| Home: Meet AEGIS + docked robot | 120 | 8.6 ms | 0 / 478 |
+| Home: Meet PRAHARI + docked robot | 120 | 8.6 ms | 0 / 478 |
 | Architecture (detailed): burst traffic | 80 | 25.0 ms | 12 / 315 |
 | Architecture: 3D galaxy + traffic | 61 | 33.5 ms | 15 / 244 |
 | Control Room: idle | 117 | 9.0 ms | 2 / 466 |
@@ -246,7 +246,7 @@ one probe). The backend suite now has 64 tests.
 A full rehearsal of the demo on the live system found three problems, all fixed:
 - **The PII guardrail hid the project's own words.** "Mac", "Redis Stack", "Lua", "OpenAI",
   "Playground" and "Chaos Lab" were tagged as people. The assistant's doc excerpts pass through
-  the gateway, so it answered "AEGIS runs on a single <PERSON>". These words are now known
+  the gateway, so it answered "PRAHARI runs on a single <PERSON>". These words are now known
   non-names; a real name beside them is still redacted.
 - **The assistant could not say what just happened.** Asked "What just happened to the primary?"
   after a crash, it replied "[1]": the demo script quotes that exact question, so the 3B model

@@ -1,6 +1,6 @@
-# AEGIS gateway configuration. Hot-reloaded when this file changes (no restart).
+# PRAHARI gateway configuration. Hot-reloaded when this file changes (no restart).
 #
-# `${NAME:-default}` reads the environment: AEGIS_MODEL_HOST=host.docker.internal points every
+# `${NAME:-default}` reads the environment: PRAHARI_MODEL_HOST=host.docker.internal points every
 # backend at the host's model servers when the gateway runs in a container.
 #
 # Clients send a public model name (`models:`). Each model maps to an ordered chain of backends;
@@ -11,7 +11,7 @@ backends:
   mlx-qwen:
     kind: openai                     # any OpenAI-compatible /v1 server
     label: MLX primary
-    base_url: http://${AEGIS_MODEL_HOST:-127.0.0.1}:8081/v1
+    base_url: http://${PRAHARI_MODEL_HOST:-127.0.0.1}:8081/v1
     model: mlx-community/Qwen2.5-3B-Instruct-4bit
     slots: 4                         # mlx-lm 0.32 batches; measured: x3.5 throughput at 4, flat beyond (make bench-serving)
     process: mlx                     # var/run/mlx.pid: lets the chaos lab SIGSTOP the real process
@@ -22,7 +22,7 @@ backends:
   ollama-llama:
     kind: openai
     label: Ollama fallback
-    base_url: http://${AEGIS_MODEL_HOST:-127.0.0.1}:11434/v1
+    base_url: http://${PRAHARI_MODEL_HOST:-127.0.0.1}:11434/v1
     model: llama3.2:3b
     slots: 2
     provider: ollama
@@ -32,7 +32,7 @@ backends:
     kind: litellm                    # optional adapter: `uv sync --extra litellm`
     label: LiteLLM adapter
     model: ollama_chat/llama3.2:3b
-    api_base: http://${AEGIS_MODEL_HOST:-127.0.0.1}:11434
+    api_base: http://${PRAHARI_MODEL_HOST:-127.0.0.1}:11434
     slots: 1
     provider: litellm
     defaults: {temperature: 0.8, top_p: 0.9, max_tokens: 512}
@@ -40,7 +40,7 @@ backends:
   litellm-proxy:
     kind: openai                     # the real LiteLLM proxy server (infra/litellm/config.yaml)
     label: LiteLLM proxy
-    base_url: http://${AEGIS_MODEL_HOST:-127.0.0.1}:4000/v1
+    base_url: http://${PRAHARI_MODEL_HOST:-127.0.0.1}:4000/v1
     model: llama3.2-3b               # LiteLLM's model_name; it routes to Ollama
     api_key_env: LITELLM_MASTER_KEY  # the proxy's key comes from the environment, not this file
     slots: 2
@@ -51,7 +51,7 @@ backends:
   vllm-metal:
     kind: openai                     # real vLLM (V1 engine, paged attention, continuous batching)
     label: vLLM (Metal)
-    base_url: http://${AEGIS_MODEL_HOST:-127.0.0.1}:8090/v1   # vllm serve ... via the vllm-metal plugin (scripts/dev.sh)
+    base_url: http://${PRAHARI_MODEL_HOST:-127.0.0.1}:8090/v1   # vllm serve ... via the vllm-metal plugin (scripts/dev.sh)
     model: qwen2.5-0.5b              # --served-model-name; weights mlx-community/Qwen2.5-0.5B-Instruct-4bit
     slots: 8                         # continuous batching: many requests share each forward pass
     provider: vllm
@@ -71,34 +71,34 @@ backends:
   #   defaults: {temperature: 0.7, top_p: 1.0, max_tokens: 512}
 
 models:
-  aegis-chat:
+  prahari-chat:
     chain: [mlx-qwen, ollama-llama]
     # "est. cloud equivalent": what the same tokens would cost on a hosted model. Local inference
     # has no bill; this is the counterfactual used for savings. Reference: gpt-4o-mini list price.
     price: {input_per_1m: 0.15, output_per_1m: 0.60, reference: gpt-4o-mini list price}
-  aegis-fallback:
+  prahari-fallback:
     chain: [ollama-llama]
     price: {input_per_1m: 0.15, output_per_1m: 0.60, reference: gpt-4o-mini list price}
-  aegis-litellm:
+  prahari-litellm:
     chain: [litellm-ollama, ollama-llama]
     price: {input_per_1m: 0.15, output_per_1m: 0.60, reference: gpt-4o-mini list price}
-  aegis-vllm:
+  prahari-vllm:
     chain: [vllm-metal, ollama-llama]
     price: {input_per_1m: 0.15, output_per_1m: 0.60, reference: gpt-4o-mini list price}
-  aegis-litellm-proxy:
+  prahari-litellm-proxy:
     chain: [litellm-proxy, ollama-llama]
     price: {input_per_1m: 0.15, output_per_1m: 0.60, reference: gpt-4o-mini list price}
 
 # API keys. `id` is the public name used in logs, metrics, the ledger and the API; the key itself
 # never leaves the auth check. These are local demo keys, readable on purpose. In production store
-# each key as its hash (`uv run python -m aegis.security hash <key>` prints the entry), e.g.
+# each key as its hash (`uv run python -m prahari.security hash <key>` prints the entry), e.g.
 #   "sha256:9f86d0...":  {id: acme, tenant: acme, tpm: 60000, budget: {soft: 50, hard: 100}}
-# `role: admin` grants the control plane; the admin credential normally comes from AEGIS_ADMIN_KEY.
+# `role: admin` grants the control plane; the admin credential normally comes from PRAHARI_ADMIN_KEY.
 keys:
-  aegis-demo-key:      {id: demo,      tenant: demo,        tpm: 30000, budget: {soft: 0.50, hard: 1.00}}
-  aegis-assistant-key: {id: assistant, tenant: aegis-bot,   tpm: 60000, budget: {soft: 0.50, hard: 1.00}}
-  aegis-flood-key:     {id: flood,     tenant: flood-test,  tpm: 1500,  budget: {soft: 0.50, hard: 1.00}}
-  aegis-budget-key:    {id: budget,    tenant: budget-test, tpm: 30000, budget: {soft: 0.0002, hard: 0.0006}}
+  prahari-demo-key:      {id: demo,      tenant: demo,        tpm: 30000, budget: {soft: 0.50, hard: 1.00}}
+  prahari-assistant-key: {id: assistant, tenant: prahari-bot,   tpm: 60000, budget: {soft: 0.50, hard: 1.00}}
+  prahari-flood-key:     {id: flood,     tenant: flood-test,  tpm: 1500,  budget: {soft: 0.50, hard: 1.00}}
+  prahari-budget-key:    {id: budget,    tenant: budget-test, tpm: 30000, budget: {soft: 0.0002, hard: 0.0006}}
   veritas-key:         {id: veritas,   tenant: veritas,     tpm: 30000, budget: {soft: 2.00, hard: 5.00}}
   nexus-key:           {id: nexus,     tenant: nexus,       tpm: 30000, budget: {soft: 2.00, hard: 5.00}}
 
@@ -113,7 +113,7 @@ limits:
 # background before an answer may be cached. ~110-150 ms warm. on_error: allow | block.
 safety:
   enabled: true
-  base_url: http://${AEGIS_MODEL_HOST:-127.0.0.1}:11434/v1
+  base_url: http://${PRAHARI_MODEL_HOST:-127.0.0.1}:11434/v1
   model: llama-guard3:1b
   timeout_ms: 2500        # a cold model load is ~2 s; warm checks take ~60-150 ms
   on_error: allow

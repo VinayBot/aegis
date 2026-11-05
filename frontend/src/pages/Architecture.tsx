@@ -440,7 +440,7 @@ async function exportPng(svg: string) {
   const ctx = canvas.getContext("2d")!;
   ctx.scale(2, 2);
   ctx.drawImage(img, 0, 0);
-  canvas.toBlob((b) => b && download("aegis-architecture.png", b), "image/png");
+  canvas.toBlob((b) => b && download("prahari-architecture.png", b), "image/png");
 }
 
 // ----------------------------------------------------------------------------- page
@@ -538,9 +538,9 @@ function SendTest() {
     setBusy(true);
     setResult(null);
     try {
-      const r = await streamChat({ model: "aegis-chat", temperature: 0, max_tokens: 80, messages: [{ role: "user", content: prompt }] }, {});
+      const r = await streamChat({ model: "prahari-chat", temperature: 0, max_tokens: 80, messages: [{ role: "user", content: prompt }] }, {});
       const s = r.summary as Record<string, unknown> | null;
-      setResult(r.status === 200 ? `${r.headers["x-cache"]} · ${backendLabel(r.headers["x-aegis-backend"])} · ${fmtMs(Number(s?.latency_ms))}` : `HTTP ${r.status}: ${String((r.error as { message?: string })?.message ?? "")}`);
+      setResult(r.status === 200 ? `${r.headers["x-cache"]} · ${backendLabel(r.headers["x-prahari-backend"])} · ${fmtMs(Number(s?.latency_ms))}` : `HTTP ${r.status}: ${String((r.error as { message?: string })?.message ?? "")}`);
     } finally {
       setBusy(false);
     }
@@ -618,8 +618,8 @@ export default function Architecture() {
           <summary className="btn btn-quiet list-none">Export</summary>
           <div className="glass glass-strong absolute right-0 z-30 mt-2 flex w-48 flex-col p-2 text-sm">
             <button type="button" className="rounded-lg px-3 py-2 text-left hover:bg-[var(--glass)]" disabled={!arch} onClick={() => arch && void exportPng(exportSvg(arch))}>PNG image</button>
-            <button type="button" className="rounded-lg px-3 py-2 text-left hover:bg-[var(--glass)]" disabled={!arch} onClick={() => arch && download("aegis-architecture.svg", new Blob([exportSvg(arch)], { type: "image/svg+xml" }))}>SVG image</button>
-            <button type="button" className="rounded-lg px-3 py-2 text-left hover:bg-[var(--glass)]" disabled={!arch} onClick={() => arch && download("aegis-topology.json", new Blob([JSON.stringify(arch, null, 2)], { type: "application/json" }))}>Topology JSON</button>
+            <button type="button" className="rounded-lg px-3 py-2 text-left hover:bg-[var(--glass)]" disabled={!arch} onClick={() => arch && download("prahari-architecture.svg", new Blob([exportSvg(arch)], { type: "image/svg+xml" }))}>SVG image</button>
+            <button type="button" className="rounded-lg px-3 py-2 text-left hover:bg-[var(--glass)]" disabled={!arch} onClick={() => arch && download("prahari-topology.json", new Blob([JSON.stringify(arch, null, 2)], { type: "application/json" }))}>Topology JSON</button>
           </div>
         </details>
         {checking && checking !== "running" && <span role="status" className="text-sm text-ink-soft">{checking}</span>}

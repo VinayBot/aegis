@@ -1,97 +1,97 @@
-# Alerting rules for AEGIS (Prometheus format), built on GET /metrics.
+# Alerting rules for PRAHARI (Prometheus format), built on GET /metrics.
 # Service levels (docs/PRODUCTION_READINESS.md): 99.5% of requests not 5xx; cache-hit p95 < 300 ms;
 # TTFT p95 < 3 s on misses. Availability uses multi-window burn-rate alerts (Google SRE workbook):
 # page when the error budget would be gone in ~2 days, ticket when in ~5 days.
 # Validated and unit-tested in CI: promtool check rules / promtool test rules (alerts_test.yml).
 groups:
-  - name: aegis-slo
+  - name: prahari-slo
     rules:
-      - record: aegis:error_ratio:rate5m
+      - record: prahari:error_ratio:rate5m
         expr: |
-          sum(rate(aegis_requests_total{status=~"error|midstream_error"}[5m]))
-            / clamp_min(sum(rate(aegis_requests_total[5m])), 1e-9)
-      - record: aegis:error_ratio:rate1h
+          sum(rate(prahari_requests_total{status=~"error|midstream_error"}[5m]))
+            / clamp_min(sum(rate(prahari_requests_total[5m])), 1e-9)
+      - record: prahari:error_ratio:rate1h
         expr: |
-          sum(rate(aegis_requests_total{status=~"error|midstream_error"}[1h]))
-            / clamp_min(sum(rate(aegis_requests_total[1h])), 1e-9)
-      - record: aegis:error_ratio:rate30m
+          sum(rate(prahari_requests_total{status=~"error|midstream_error"}[1h]))
+            / clamp_min(sum(rate(prahari_requests_total[1h])), 1e-9)
+      - record: prahari:error_ratio:rate30m
         expr: |
-          sum(rate(aegis_requests_total{status=~"error|midstream_error"}[30m]))
-            / clamp_min(sum(rate(aegis_requests_total[30m])), 1e-9)
-      - record: aegis:error_ratio:rate6h
+          sum(rate(prahari_requests_total{status=~"error|midstream_error"}[30m]))
+            / clamp_min(sum(rate(prahari_requests_total[30m])), 1e-9)
+      - record: prahari:error_ratio:rate6h
         expr: |
-          sum(rate(aegis_requests_total{status=~"error|midstream_error"}[6h]))
-            / clamp_min(sum(rate(aegis_requests_total[6h])), 1e-9)
+          sum(rate(prahari_requests_total{status=~"error|midstream_error"}[6h]))
+            / clamp_min(sum(rate(prahari_requests_total[6h])), 1e-9)
 
-      - alert: AegisErrorBudgetFastBurn
+      - alert: PrahariErrorBudgetFastBurn
         # 14.4x the 0.5% budget: two days' budget gone in an hour
-        expr: aegis:error_ratio:rate1h > (14.4 * 0.005) and aegis:error_ratio:rate5m > (14.4 * 0.005)
+        expr: prahari:error_ratio:rate1h > (14.4 * 0.005) and prahari:error_ratio:rate5m > (14.4 * 0.005)
         for: 2m
         labels: {severity: page}
         annotations:
-          summary: "AEGIS is burning its error budget fast ({{ $value | humanizePercentage }} errors)"
+          summary: "PRAHARI is burning its error budget fast ({{ $value | humanizePercentage }} errors)"
           runbook: "docs/PRODUCTION_READINESS.md#runbook"
 
-      - alert: AegisErrorBudgetSlowBurn
-        expr: aegis:error_ratio:rate6h > (6 * 0.005) and aegis:error_ratio:rate30m > (6 * 0.005)
+      - alert: PrahariErrorBudgetSlowBurn
+        expr: prahari:error_ratio:rate6h > (6 * 0.005) and prahari:error_ratio:rate30m > (6 * 0.005)
         for: 15m
         labels: {severity: ticket}
         annotations:
-          summary: "AEGIS error rate is eating its budget ({{ $value | humanizePercentage }})"
+          summary: "PRAHARI error rate is eating its budget ({{ $value | humanizePercentage }})"
 
-      - alert: AegisTimeToFirstTokenSlow
+      - alert: PrahariTimeToFirstTokenSlow
         expr: |
-          histogram_quantile(0.95, sum by (le) (rate(aegis_time_to_first_token_seconds_bucket[10m]))) > 3
+          histogram_quantile(0.95, sum by (le) (rate(prahari_time_to_first_token_seconds_bucket[10m]))) > 3
         for: 10m
         labels: {severity: ticket}
         annotations:
           summary: "p95 time to first token is {{ $value | humanizeDuration }} (SLO 3 s)"
 
-      - alert: AegisCacheHitLatencyHigh
+      - alert: PrahariCacheHitLatencyHigh
         expr: |
-          histogram_quantile(0.95, sum by (le) (rate(aegis_request_duration_seconds_bucket{cache="exact"}[10m]))) > 0.3
+          histogram_quantile(0.95, sum by (le) (rate(prahari_request_duration_seconds_bucket{cache="exact"}[10m]))) > 0.3
         for: 10m
         labels: {severity: ticket}
         annotations:
           summary: "p95 cache-hit latency is {{ $value | humanizeDuration }} (SLO 300 ms): the gateway itself is slow"
 
-  - name: aegis-backends
+  - name: prahari-backends
     rules:
-      - alert: AegisBreakerOpen
-        expr: aegis_breaker_state == 2
+      - alert: PrahariBreakerOpen
+        expr: prahari_breaker_state == 2
         for: 2m
         labels: {severity: ticket}
         annotations:
           summary: "Circuit breaker open on {{ $labels.backend }} for 2 minutes"
 
-      - alert: AegisNoBackendAvailable
+      - alert: PrahariNoBackendAvailable
         # every breaker open: nothing can serve
-        expr: count(aegis_breaker_state == 2) == count(aegis_breaker_state)
+        expr: count(prahari_breaker_state == 2) == count(prahari_breaker_state)
         for: 1m
         labels: {severity: page}
         annotations:
-          summary: "Every AEGIS backend has its breaker open"
+          summary: "Every PRAHARI backend has its breaker open"
 
-  - name: aegis-traffic
+  - name: prahari-traffic
     rules:
-      - alert: AegisRateLimitPressure
-        expr: sum(rate(aegis_rejections_total{reason="rate_limit"}[10m])) > 1
+      - alert: PrahariRateLimitPressure
+        expr: sum(rate(prahari_rejections_total{reason="rate_limit"}[10m])) > 1
         for: 10m
         labels: {severity: info}
         annotations:
           summary: "More than one request a second refused by rate limits: raise a key's tpm or find the noisy client"
 
-      - alert: AegisSafetyBlockSpike
-        expr: sum(rate(aegis_rejections_total{reason="safety"}[15m])) > 0.2
+      - alert: PrahariSafetyBlockSpike
+        expr: sum(rate(prahari_rejections_total{reason="safety"}[15m])) > 0.2
         for: 15m
         labels: {severity: ticket}
         annotations:
           summary: "Llama Guard is blocking an unusual share of prompts: probing, or a threshold to revisit"
 
-      - alert: AegisAnswersRatedDown
+      - alert: PrahariAnswersRatedDown
         expr: |
-          sum(rate(aegis_feedback_total{rating="down"}[6h])) / clamp_min(sum(rate(aegis_feedback_total[6h])), 1e-9) > 0.3
-          and sum(increase(aegis_feedback_total[6h])) > 20
+          sum(rate(prahari_feedback_total{rating="down"}[6h])) / clamp_min(sum(rate(prahari_feedback_total[6h])), 1e-9) > 0.3
+          and sum(increase(prahari_feedback_total[6h])) > 20
         for: 30m
         labels: {severity: ticket}
         annotations:

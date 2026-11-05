@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: aegis
+  name: prahari
   labels:
     # the strictest built-in pod security level: the gateway pod is designed to pass it
     pod-security.kubernetes.io/enforce: restricted

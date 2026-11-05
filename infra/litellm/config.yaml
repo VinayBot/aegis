@@ -1,7 +1,7 @@
-# LiteLLM proxy (the real server: `litellm --config`), one backend in AEGIS's chain.
+# LiteLLM proxy (the real server: `litellm --config`), one backend in PRAHARI's chain.
 #
-# AEGIS owns reliability (slots, breakers, hedging, chain retries), so LiteLLM's own retries are
-# off here: two retry layers would multiply attempts and hide failures from AEGIS's breakers.
+# PRAHARI owns reliability (slots, breakers, hedging, chain retries), so LiteLLM's own retries are
+# off here: two retry layers would multiply attempts and hide failures from PRAHARI's breakers.
 # LiteLLM still does what it is good at: one OpenAI-compatible surface over many providers, with
 # provider translation, its own key and per-model rpm limits. Adding a cloud provider is one more
 # entry in model_list (its key read from the environment, never written here).

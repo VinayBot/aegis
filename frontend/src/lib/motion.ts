@@ -12,7 +12,7 @@ export const useMotionPause = create<{ paused: boolean; toggle: () => void }>((s
   toggle: () => {
     const paused = !get().paused;
     try {
-      localStorage.setItem("aegis-motion-paused", paused ? "1" : "0");
+      localStorage.setItem("prahari-motion-paused", paused ? "1" : "0");
     } catch {
       /* storage unavailable: the choice lasts for this visit */
     }
@@ -23,7 +23,7 @@ export const useMotionPause = create<{ paused: boolean; toggle: () => void }>((s
 
 function readPaused(): boolean {
   try {
-    const paused = typeof localStorage !== "undefined" && localStorage.getItem("aegis-motion-paused") === "1";
+    const paused = typeof localStorage !== "undefined" && localStorage.getItem("prahari-motion-paused") === "1";
     if (paused && typeof document !== "undefined") document.documentElement.dataset.motion = "off";
     return paused;
   } catch {

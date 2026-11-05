@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from aegis.engine import EngineStats, metrics_url, parse_vllm
+from prahari.engine import EngineStats, metrics_url, parse_vllm
 from tests.conftest import Gateway
 from tests.fake_backend import FakeControl
 
@@ -41,7 +41,7 @@ async def test_a_saturated_engine_is_routed_around(
 ) -> None:
     saturate(gateway, "primary")
     r = await gateway.chat("engine says it is queueing", headers={"cache-control": "no-cache"})
-    assert r.headers["x-aegis-backend"] == "fallback" and fakes["primary"].calls == 0
+    assert r.headers["x-prahari-backend"] == "fallback" and fakes["primary"].calls == 0
     events = [e for e in gateway.state.bus.recent if e["type"] == "engine.saturated"]
     assert events and events[-1]["backend"] == "primary" and events[-1]["waiting"] == 9
 
@@ -52,7 +52,7 @@ async def test_a_full_kv_cache_also_counts(
 ) -> None:
     saturate(gateway, "primary", waiting=0, kv=kv)
     r = await gateway.chat("kv cache nearly full", headers={"cache-control": "no-cache"})
-    assert r.headers["x-aegis-backend"] == "fallback"
+    assert r.headers["x-prahari-backend"] == "fallback"
 
 
 async def test_a_saturated_engine_still_serves_when_it_is_the_only_one(
@@ -61,7 +61,7 @@ async def test_a_saturated_engine_still_serves_when_it_is_the_only_one(
     saturate(gateway, "primary")
     gateway.state.router.runtimes["fallback"].breaker.force("open", "test")
     r = await gateway.chat("only the busy one is left", headers={"cache-control": "no-cache"})
-    assert r.status_code == 200 and r.headers["x-aegis-backend"] == "primary"
+    assert r.status_code == 200 and r.headers["x-prahari-backend"] == "primary"
 
 
 async def test_stale_engine_stats_are_ignored(
@@ -73,4 +73,4 @@ async def test_stale_engine_stats_are_ignored(
         running=8, waiting=99, kv_cache_usage=1.0, prefix_cache_hit_rate=None, at=time.time() - 60
     )
     r = await gateway.chat("old stats say nothing about now", headers={"cache-control": "no-cache"})
-    assert r.headers["x-aegis-backend"] == "primary"
+    assert r.headers["x-prahari-backend"] == "primary"

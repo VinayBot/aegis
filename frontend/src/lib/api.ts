@@ -27,7 +27,7 @@ export async function api<T>(path: string, init?: RequestInit & { json?: unknown
   return body as T;
 }
 
-export const DEMO_KEY = "aegis-demo-key";
+export const DEMO_KEY = "prahari-demo-key";
 
 export interface StreamResult {
   status: number;
@@ -48,8 +48,8 @@ export async function streamChat(
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${opts.key ?? DEMO_KEY}`,
-      "x-aegis-summary": "1",
-      "x-aegis-client": "playground",
+      "x-prahari-summary": "1",
+      "x-prahari-client": "playground",
       ...(opts.noCache ? { "cache-control": "no-cache" } : {}),
     },
     body: JSON.stringify({ ...body, stream: true }),
@@ -94,7 +94,7 @@ export async function streamChat(
       }
       if (!data || data === "[DONE]") continue;
       const obj = JSON.parse(data);
-      if (event === "aegis") summary = obj;
+      if (event === "prahari") summary = obj;
       else if (event === "error") error = obj.error ?? obj;
       else {
         for (const c of obj.choices ?? []) {
@@ -149,7 +149,7 @@ export function wsChat(
       } else if (msg.type === "error") {
         out.status = msg.status ?? 500;
         out.error = msg.error ?? msg;
-        if (!out.headers["x-aegis-request-id"]) opts.onHeaders?.(out.headers, out.status);
+        if (!out.headers["x-prahari-request-id"]) opts.onHeaders?.(out.headers, out.status);
         finish();
       } else if (msg.type === "cancelled") {
         out.error = { code: "cancelled", message: "Stopped by you: the model call was cancelled" };

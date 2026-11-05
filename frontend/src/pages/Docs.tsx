@@ -1,4 +1,4 @@
-// The project's own docs, rendered from the gateway (/api/docs), so the site and the AEGIS
+// The project's own docs, rendered from the gateway (/api/docs), so the site and the PRAHARI
 // assistant read the same source.
 import { BlurWords } from "../components/fx";
 import { useEffect, useState } from "react";
@@ -69,8 +69,8 @@ export default function Docs() {
     <>
     <TiltedGridHero images={REEL} speed={4.5} tileHeight={34} axis={60} className="h-[420px] w-full">
       <div className="relative z-10 flex h-full flex-col items-center justify-start pt-10 text-center">
-        <h1 className="text-shimmer font-display text-4xl font-semibold tracking-tight md:text-6xl">How AEGIS works</h1>
-        <p className="mt-3 max-w-[46ch] px-6 text-ink-soft">The architecture, the decisions, the API and the demo, read from the same documents the AEGIS assistant answers from.</p>
+        <h1 className="text-shimmer font-display text-4xl font-semibold tracking-tight md:text-6xl">How PRAHARI works</h1>
+        <p className="mt-3 max-w-[46ch] px-6 text-ink-soft">The architecture, the decisions, the API and the demo, read from the same documents the PRAHARI assistant answers from.</p>
       </div>
     </TiltedGridHero>
     <div className="mx-auto grid max-w-[1300px] gap-10 px-[var(--gutter)] py-10 lg:grid-cols-[240px_1fr]">
@@ -87,7 +87,7 @@ export default function Docs() {
           ))}
         </ul>
       </nav>
-      <article className="prose-aegis min-w-0">
+      <article className="prose-prahari min-w-0">
         {mode !== "live" && <p className="text-amber">The docs are served by the gateway; start it to read them here, or open the docs/ folder.</p>}
         {error && <p role="alert" className="text-red">{error}</p>}
         {markdown === null && mode === "live" && !error && <p aria-busy="true">Loading…</p>}

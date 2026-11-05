@@ -28,7 +28,7 @@ def bearer(token: object) -> dict[str, str]:
 async def test_a_token_stands_in_for_its_key(gateway: Gateway) -> None:
     tok = await exchange(gateway, "k-demo")
     assert tok["token_type"] == "bearer" and tok["tenant"] == "demo" and tok["expires_in"] == 900
-    claims = jwt.decode(str(tok["access_token"]), SECRET, algorithms=["HS256"], issuer="aegis")
+    claims = jwt.decode(str(tok["access_token"]), SECRET, algorithms=["HS256"], issuer="prahari")
     assert claims["sub"] == "key_" + claims["sub"][4:] and "k-demo" not in str(
         claims
     )  # id, not key
@@ -49,7 +49,7 @@ async def test_a_tenant_token_cannot_reach_admin_routes(gateway: Gateway) -> Non
 
 async def test_expired_tampered_and_revoked_tokens_fail(gateway: Gateway) -> None:
     tok = str((await exchange(gateway, "k-demo"))["access_token"])
-    claims = jwt.decode(tok, SECRET, algorithms=["HS256"], issuer="aegis")
+    claims = jwt.decode(tok, SECRET, algorithms=["HS256"], issuer="prahari")
     expired = jwt.encode({**claims, "exp": int(time.time()) - 5}, SECRET, algorithm="HS256")
     forged = jwt.encode({**claims, "tenant": "other"}, SECRET, algorithm="HS256")
     wrong_key = jwt.encode(claims, "not-the-secret-0123456789abcdef0123", algorithm="HS256")

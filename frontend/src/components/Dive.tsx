@@ -80,7 +80,7 @@ function Caption({ region, index, progress, live }: { region: Region; index: num
 function StaticDive({ live }: { live: Live }) {
   return (
     <section aria-labelledby="dive-title" className="mx-auto max-w-[1100px] px-[var(--gutter)] py-24">
-      <h2 id="dive-title" className="font-display text-4xl font-semibold tracking-tight md:text-5xl">Inside AEGIS, region by region</h2>
+      <h2 id="dive-title" className="font-display text-4xl font-semibold tracking-tight md:text-5xl">Inside PRAHARI, region by region</h2>
       <p className="mt-4 max-w-[60ch] text-lg text-ink-soft">Five subsystems every request passes through, each with a number from the running gateway.</p>
       <ol className="mt-12 grid gap-5">
         {REGIONS.map((r) => (
@@ -133,7 +133,7 @@ export default function Dive() {
   return (
     <section ref={ref} aria-labelledby="dive-title" className="relative" style={{ height: "620vh" }}>
       <div className="sticky top-0 h-screen overflow-hidden">
-        <h2 id="dive-title" className="sr-only">Inside AEGIS: a dive through the gateway's five subsystems</h2>
+        <h2 id="dive-title" className="sr-only">Inside PRAHARI: a dive through the gateway's five subsystems</h2>
         <motion.div style={{ opacity: brainOpacity }} className="absolute inset-0">
           {near && armed && (
             <Suspense fallback={null}>

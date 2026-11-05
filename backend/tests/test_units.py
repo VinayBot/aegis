@@ -9,17 +9,17 @@ from pathlib import Path
 
 import pytest
 
-from aegis import guardrails
-from aegis.breaker import Breaker
-from aegis.cache import build_keys
-from aegis.coalesce import Coalescer
-from aegis.config import ConfigStore, GatewayConfig
-from aegis.events import EventBus
-from aegis.guardrails import injection, pii
-from aegis.ledger import Ledger
-from aegis.metrics import Metrics
-from aegis.ratelimit import RateLimiter
-from aegis.router import is_first_token, percentile
+from prahari import guardrails
+from prahari.breaker import Breaker
+from prahari.cache import build_keys
+from prahari.coalesce import Coalescer
+from prahari.config import ConfigStore, GatewayConfig
+from prahari.events import EventBus
+from prahari.guardrails import injection, pii
+from prahari.ledger import Ledger
+from prahari.metrics import Metrics
+from prahari.ratelimit import RateLimiter
+from prahari.router import is_first_token, percentile
 from tests.conftest import write_config
 
 # ------------------------------------------------------------------ breaker
@@ -100,8 +100,8 @@ def _cfg(tmp_path: Path) -> GatewayConfig:
 
 def test_effective_params_fill_provider_defaults_without_injecting(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
-    assert cfg.effective_params("aegis-chat", {}) == {"temperature": 0.0, "max_tokens": 64}
-    assert cfg.effective_params("aegis-chat", {"temperature": 0.7})["temperature"] == 0.7
+    assert cfg.effective_params("prahari-chat", {}) == {"temperature": 0.0, "max_tokens": 64}
+    assert cfg.effective_params("prahari-chat", {"temperature": 0.7})["temperature"] == 0.7
 
 
 def test_cache_key_includes_effective_params() -> None:
@@ -368,7 +368,7 @@ async def test_ledger_batches_writes_off_the_event_loop(tmp_path: Path) -> None:
 
 def test_tenant_queries_use_an_index(tmp_path: Path) -> None:
     """EXPLAIN QUERY PLAN: every read a tenant can make is an index search, never a scan."""
-    from aegis.ledger import Ledger
+    from prahari.ledger import Ledger
 
     ledger = Ledger(tmp_path / "plan.sqlite3")
     recent = " ".join(ledger.explain(Ledger.RECENT_TENANT_SQL, ("demo", 50)))
@@ -381,27 +381,27 @@ def test_tenant_queries_use_an_index(tmp_path: Path) -> None:
 def test_old_ledgers_are_migrated_to_key_ids(tmp_path: Path) -> None:
     import sqlite3
 
-    from aegis.ledger import Ledger
+    from prahari.ledger import Ledger
 
     path = tmp_path / "old.sqlite3"
     conn = sqlite3.connect(path)
     conn.execute(
         "CREATE TABLE requests (id TEXT PRIMARY KEY, ts REAL NOT NULL, tenant TEXT, api_key TEXT)"
     )
-    conn.execute("INSERT INTO requests VALUES ('r1', 1.0, 'demo', 'aegis-demo-key')")
+    conn.execute("INSERT INTO requests VALUES ('r1', 1.0, 'demo', 'prahari-demo-key')")
     conn.commit()
     conn.close()
     ledger = Ledger(path)
-    assert ledger.remap_key_ids({"aegis-demo-key": "demo"}) == 1
+    assert ledger.remap_key_ids({"prahari-demo-key": "demo"}) == 1
     assert ledger._query("SELECT key_id FROM requests") == [{"key_id": "demo"}]
-    assert ledger.remap_key_ids({"aegis-demo-key": "demo"}) == 0  # idempotent
+    assert ledger.remap_key_ids({"prahari-demo-key": "demo"}) == 0  # idempotent
     ledger.close()
 
 
 def test_full_jitter_stays_inside_its_window() -> None:
     import random
 
-    from aegis.retry import full_jitter
+    from prahari.retry import full_jitter
 
     rng = random.Random(7)
     for attempt in range(6):
@@ -414,8 +414,8 @@ def test_full_jitter_stays_inside_its_window() -> None:
 def test_langfuse_target_uses_basic_auth_on_the_otlp_endpoint() -> None:
     import base64
 
-    from aegis.settings import Settings
-    from aegis.telemetry import langfuse_target
+    from prahari.settings import Settings
+    from prahari.telemetry import langfuse_target
 
     assert langfuse_target(Settings()) is None
     s = Settings(
@@ -432,11 +432,11 @@ def test_json_logs_carry_the_request_context() -> None:
     import json as _json
     import logging
 
-    from aegis import logcontext
+    from prahari import logcontext
 
     logcontext.bind(request_id="req_x", trace_id="abc123", tenant="demo")
     record = logging.makeLogRecord(
-        {"name": "aegis.request", "levelname": "INFO", "msg": "request", "status": "ok"}
+        {"name": "prahari.request", "levelname": "INFO", "msg": "request", "status": "ok"}
     )
     line = _json.loads(logcontext.JsonFormatter().format(record))
     assert line["request_id"] == "req_x" and line["trace_id"] == "abc123"
@@ -445,9 +445,9 @@ def test_json_logs_carry_the_request_context() -> None:
 
 
 def test_access_rules() -> None:
-    from aegis.config import GatewayConfig
-    from aegis.security import principal_for
-    from aegis.settings import Settings
+    from prahari.config import GatewayConfig
+    from prahari.security import principal_for
+    from prahari.settings import Settings
 
     cfg = GatewayConfig.model_validate(
         {
@@ -486,7 +486,7 @@ def test_access_rules() -> None:
 
 
 def test_stream_redactor_sees_a_value_split_across_chunks() -> None:
-    from aegis.guardrails.output import StreamRedactor
+    from prahari.guardrails.output import StreamRedactor
 
     r = StreamRedactor()
     pieces = ["Write to vin", "ay.sharma@exa", "mple.com or call +91 98", "76543210 today."]
@@ -496,7 +496,7 @@ def test_stream_redactor_sees_a_value_split_across_chunks() -> None:
 
 
 def test_output_redaction_patterns_and_non_matches() -> None:
-    from aegis.guardrails.output import redact_text
+    from prahari.guardrails.output import redact_text
 
     counts: dict[str, int] = {}
     text = (
@@ -514,7 +514,7 @@ def test_output_redaction_patterns_and_non_matches() -> None:
 
 
 def test_stream_redactor_never_holds_a_long_run_forever() -> None:
-    from aegis.guardrails.output import MAX_HOLD, StreamRedactor
+    from prahari.guardrails.output import MAX_HOLD, StreamRedactor
 
     r = StreamRedactor()
     released = r.feed("x" * (MAX_HOLD + 10))
@@ -522,7 +522,7 @@ def test_stream_redactor_never_holds_a_long_run_forever() -> None:
 
 
 def test_llama_guard_output_parsing() -> None:
-    from aegis.guardrails.safety import parse
+    from prahari.guardrails.safety import parse
 
     assert parse("safe") == (True, [])
     assert parse("\nunsafe\nS1,S10\n") == (False, ["S1", "S10"])
@@ -531,7 +531,7 @@ def test_llama_guard_output_parsing() -> None:
 
 
 def test_stream_redactor_keeps_words_whole() -> None:
-    from aegis.guardrails.output import StreamRedactor
+    from prahari.guardrails.output import StreamRedactor
 
     r = StreamRedactor()
     assert r.feed("call 98 ") == "call "  # a number-like word is held until the next word
@@ -544,7 +544,7 @@ def test_stream_redactor_keeps_words_whole() -> None:
 def test_p_unsafe_from_logprobs() -> None:
     import math
 
-    from aegis.guardrails.safety import p_unsafe_of
+    from prahari.guardrails.safety import p_unsafe_of
 
     def choice(p: float) -> dict[str, object]:
         tops = [
@@ -558,22 +558,22 @@ def test_p_unsafe_from_logprobs() -> None:
 
 
 def test_config_reads_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    from aegis.config import expand_env
+    from prahari.config import expand_env
 
-    monkeypatch.delenv("AEGIS_MODEL_HOST", raising=False)
-    assert expand_env("http://${AEGIS_MODEL_HOST:-127.0.0.1}:8081") == "http://127.0.0.1:8081"
-    monkeypatch.setenv("AEGIS_MODEL_HOST", "host.docker.internal")
+    monkeypatch.delenv("PRAHARI_MODEL_HOST", raising=False)
+    assert expand_env("http://${PRAHARI_MODEL_HOST:-127.0.0.1}:8081") == "http://127.0.0.1:8081"
+    monkeypatch.setenv("PRAHARI_MODEL_HOST", "host.docker.internal")
     assert (
-        expand_env("http://${AEGIS_MODEL_HOST:-127.0.0.1}:8081")
+        expand_env("http://${PRAHARI_MODEL_HOST:-127.0.0.1}:8081")
         == "http://host.docker.internal:8081"
     )
     with pytest.raises(ValueError):
-        expand_env("${AEGIS_SURELY_UNSET_VAR}")
+        expand_env("${PRAHARI_SURELY_UNSET_VAR}")
 
 
 def test_stream_redactor_cannot_be_made_slow() -> None:
     """Regression: a nested-quantifier regex backtracked exponentially on "(1) (1) ... x"."""
-    from aegis.guardrails.output import StreamRedactor
+    from prahari.guardrails.output import StreamRedactor
 
     r = StreamRedactor()
     start = time.perf_counter()
@@ -584,7 +584,7 @@ def test_stream_redactor_cannot_be_made_slow() -> None:
 
 def test_a_secret_in_minified_json_is_caught_across_chunks() -> None:
     """No whitespace for hundreds of characters: the cut falls on a JSON break, never mid-key."""
-    from aegis.guardrails.output import StreamRedactor
+    from prahari.guardrails.output import StreamRedactor
 
     body = '{"config":{"region":"ap-south-1","retries":3,' + '"pad":"' + "a" * 120 + '",'
     body += '"key":"sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"}}'
@@ -626,8 +626,8 @@ def test_breaker_window_forgets_old_failures() -> None:
 def _docs_index(tmp_path: Path, texts: dict[str, str]) -> object:
     from types import SimpleNamespace
 
-    from aegis.assistant import DocsIndex
-    from aegis.embedder import Embedder
+    from prahari.assistant import DocsIndex
+    from prahari.embedder import Embedder
 
     docs = tmp_path / "docs"
     docs.mkdir()
@@ -635,11 +635,11 @@ def _docs_index(tmp_path: Path, texts: dict[str, str]) -> object:
         (docs / name).write_text(text)
     cfg = tmp_path / "gateway.yaml"
     cfg.write_text(
-        "backends: {b: {model: m}}\nmodels: {aegis-chat: {chain: [b]}}\n"
+        "backends: {b: {model: m}}\nmodels: {prahari-chat: {chain: [b]}}\n"
         "keys: {k: {tenant: t, tpm: 1, budget: {soft: 1, hard: 2}}}\n"
     )
-    from aegis.config import ConfigStore
-    from aegis.settings import Settings
+    from prahari.config import ConfigStore
+    from prahari.settings import Settings
 
     settings = Settings(project_dir=tmp_path, docs_dir=docs, config_path=cfg)
     state = SimpleNamespace(
@@ -676,8 +676,8 @@ async def test_hybrid_retrieval_declines_off_topic_questions(tmp_path: Path) -> 
 async def test_the_site_route_only_serves_files_of_the_built_site(tmp_path: Path) -> None:
     import httpx
 
-    from aegis.main import _mount_site
-    from aegis.settings import Settings
+    from prahari.main import _mount_site
+    from prahari.settings import Settings
 
     dist = tmp_path / "frontend" / "dist"
     (dist / "assets").mkdir(parents=True)

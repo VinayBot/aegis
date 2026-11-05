@@ -1,6 +1,6 @@
-# Learning AEGIS: a guided tour of the whole project
+# Learning PRAHARI: a guided tour of the whole project
 
-This guide explains AEGIS from the ground up: what problem it solves, how a request travels through
+This guide explains PRAHARI from the ground up: what problem it solves, how a request travels through
 it, what every tab of the website shows, which technologies were used, and why. Each idea is
 explained first in plain words, then shown in this codebase, then given a way to try it yourself.
 
@@ -12,7 +12,7 @@ Read it in order the first time. Later, use the table of contents to jump to a p
 4. [Reliability: breakers, hedging, failover, "busy is not broken"](#4-reliability-staying-up-when-models-misbehave)
 5. [Seeing inside: events, metrics, traces](#5-seeing-inside-events-metrics-and-traces)
 6. [The website, tab by tab](#6-the-website-tab-by-tab)
-7. [The AEGIS chatbot](#7-the-aegis-chatbot)
+7. [The PRAHARI chatbot](#7-the-prahari-chatbot)
 8. [The tech stack, and why each piece](#8-the-tech-stack-and-why-each-piece)
 9. [How the frontend is built](#9-how-the-frontend-is-built)
 10. [Testing: how we know it works](#10-testing-how-we-know-it-works)
@@ -55,7 +55,7 @@ normal OpenAI-style API. Behind that door, the gateway:
 | Hedging and failover | "That model is slow or broken; try another one." |
 | Observability | "Show me exactly what happened to every request." |
 
-**AEGIS** is that gateway, built for real, running on one Mac with two local AI models. The website
+**PRAHARI** is that gateway, built for real, running on one Mac with two local AI models. The website
 is a live window into it: every number, light and chart on it comes from the running system.
 
 ### The one rule of this project
@@ -76,7 +76,7 @@ frontend, `Math.random()` is banned in data paths: an ESLint rule and a unit tes
  Browser (React site)  :5173  ──────────────┐
    │  HTTP + WebSocket                      │ (Vite dev server proxies /api, /v1, /ws)
    ▼                                        ▼
- AEGIS gateway (FastAPI, Python)  :8000
+ PRAHARI gateway (FastAPI, Python)  :8000
    │            │              │                     │
    │            │              │ OTLP traces          │ background writes
    ▼            ▼              ▼                     ▼
@@ -112,7 +112,7 @@ frontend, `Math.random()` is banned in data paths: an ESLint rule and a unit tes
 ## 3. The journey of one request
 
 This is the most important section. Follow one chat request from start to finish. The code is
-`backend/aegis/pipeline.py`, and every step below is its own **span** (a timed box) in the trace.
+`backend/prahari/pipeline.py`, and every step below is its own **span** (a timed box) in the trace.
 
 ```
 client ─► auth ─► guardrails ─► rate limit ─► budget ─► exact cache ─► semantic cache
@@ -134,8 +134,8 @@ budget), **Remember** (caches, coalescer), **Choose** (router, hedger), **Think*
 - **Idea:** every caller sends `Authorization: Bearer <key>`. The key maps to a **tenant** (a team
   or app) with its own limits.
 - **Here:** keys live in `backend/config/gateway.yaml`. Examples:
-  - `aegis-demo-key` is the demo tenant;
-  - `aegis-flood-key` has a tiny limit, so the rate-limit demo can trip it.
+  - `prahari-demo-key` is the demo tenant;
+  - `prahari-flood-key` has a tiny limit, so the rate-limit demo can trip it.
 - **Try it:** send a request with a wrong key and you get `401`.
 
 ### Step 2: Guardrails (privacy and safety)
@@ -144,7 +144,7 @@ budget), **Remember** (caches, coalescer), **Choose** (router, hedger), **Think*
   with placeholders. "Email priya@example.com" becomes "Email `<EMAIL_ADDRESS>`".
   - **How:** Microsoft **Presidio**, plus spaCy's `en_core_web_sm` language model, which recognises
     names. Custom recognisers handle email, a given-names list, and Indian Aadhaar and PAN numbers.
-  - **Where:** `backend/aegis/guardrails/pii.py` (adapted from the earlier Veritas project).
+  - **Where:** `backend/prahari/guardrails/pii.py` (adapted from the earlier Veritas project).
   - **Lesson from testing:** spaCy thought "Redis" and "Ollama" were people's names. A list of
     software names fixed that, while a real name next to "Redis" is still hidden.
 - **Prompt injection:** "Ignore all previous instructions…" is blocked before any model runs
@@ -164,14 +164,14 @@ budget), **Remember** (caches, coalescer), **Choose** (router, hedger), **Think*
   part.
 - **Why a Lua script?** Redis runs a Lua script **atomically**: read the bucket, refill, subtract
   and save all happen as one step, so two simultaneous requests can never both take the last token.
-  See the script at the top of `backend/aegis/ratelimit.py`.
+  See the script at the top of `backend/prahari/ratelimit.py`.
 - **If Redis is down:** it falls back to an in-process bucket. The system degrades; it does not die.
 
 ### Step 4: Budgets
 
 - **Idea:** each tenant has a **soft** limit (you get a warning header) and a **hard** limit (blocked
   with `402`).
-- **Cost honesty:** local models have no bill. AEGIS therefore prices every request at a reference
+- **Cost honesty:** local models have no bill. PRAHARI therefore prices every request at a reference
   cloud price (gpt-4o-mini list price) and labels it **"est. cloud equivalent"** everywhere. When a
   model doesn't report token usage, the estimate is flagged ±30%. This was one of the three
   mandatory corrections to the original design.
@@ -182,7 +182,7 @@ budget), **Remember** (caches, coalescer), **Choose** (router, hedger), **Think*
 - **The cache key** is a hash of (tenant, model, all messages, effective parameters). Parameters
   matter: the same question at temperature 0 and at 0.8 should give different answers, so they are
   different entries.
-- **Correction 1 (important):** if the client doesn't send a temperature, AEGIS does *not* invent
+- **Correction 1 (important):** if the client doesn't send a temperature, PRAHARI does *not* invent
   `temperature=0`. It caches on the provider's real default instead. Silently changing a client's
   request would change its answers.
 - **Replay as a stream:** a cached answer is sent back as server-sent events, so clients can't tell
@@ -224,7 +224,7 @@ This is the most "AI" part of the gateway.
 - **How:** the first request becomes the **leader** and calls the model. The other nine become
   **followers**: they wait on the leader's "flight", and the leader's stream is copied to all of
   them. Result: **1 upstream call, 9 coalesced**.
-- **Where:** `backend/aegis/coalesce.py` (`Flight`, `Coalescer`).
+- **Where:** `backend/prahari/coalesce.py` (`Flight`, `Coalescer`).
 - **Try it:** Chaos Lab → "Duplicate storm", or Playground → "Send this 10× at once".
 
 ### Step 8: Routing (choosing a model)
@@ -274,7 +274,7 @@ Named after the electrical switch in your house. It has three states:
 
 **Why?** Without a breaker, every request would wait the full timeout on a dead model before
 failing over. With it, after a few failures, traffic skips the broken model instantly. Then, carefully,
-one request checks whether it has recovered. Code: `backend/aegis/breaker.py`.
+one request checks whether it has recovered. Code: `backend/prahari/breaker.py`.
 
 ### Failover
 
@@ -311,7 +311,7 @@ The **Chaos Lab** really breaks the system:
 - **Error rate:** make N% of calls fail.
 
 Every action is logged, reversible, and **auto-reverts after 120 s**. The chaos endpoints only exist
-when `AEGIS_CHAOS_ENABLED=1` (`make dev` sets it). On a real deployment they would be off.
+when `PRAHARI_CHAOS_ENABLED=1` (`make dev` sets it). On a real deployment they would be off.
 
 ---
 
@@ -333,7 +333,7 @@ exactly when a real request crosses that stage.
 
 ### OpenTelemetry and the `gen_ai.*` conventions
 
-OpenTelemetry (OTel) is the industry standard for traces. AEGIS creates one **span** per stage and
+OpenTelemetry (OTel) is the industry standard for traces. PRAHARI creates one **span** per stage and
 uses the official **GenAI semantic conventions** (attribute names like `gen_ai.request.model` and
 `gen_ai.usage.input_tokens`). Because it's standard, the same traces could be sent to Langfuse,
 Grafana or Datadog with only a config change.
@@ -386,7 +386,7 @@ Things every page shares (`components/Shell.tsx`):
    there (`components/ui/perspective-tunnel-hero.tsx`).
 4. **Proof strip.** Live counters: requests served, cache hit rate, estimated savings and breaker
    trips survived.
-5. **Meet AEGIS.** The standing robot: its eyes follow your pointer, a scan beam passes over it, and a
+5. **Meet PRAHARI.** The standing robot: its eyes follow your pointer, a scan beam passes over it, and a
    speech bubble invites you to ask it anything.
 
 With reduced motion, the dive becomes a vertical list of static cards with the same live numbers.
@@ -510,7 +510,7 @@ Any unknown address shows "This page is off the map", with a way back.
 
 ---
 
-## 7. The AEGIS chatbot
+## 7. The PRAHARI chatbot
 
 The white 3D robot in the corner (`scenes/Robot3D.tsx`, built from scratch in three.js):
 - it hovers over a glowing pad and suggests questions;
@@ -524,7 +524,7 @@ The white 3D robot in the corner (`scenes/Robot3D.tsx`, built from scratch in th
 *from that text only*.
 
 1. **Index:** at startup, the project's docs, the YAML config and the API schema are split into chunks
-   and embedded with the **same bge-small embedder** the cache uses (`backend/aegis/assistant.py`).
+   and embedded with the **same bge-small embedder** the cache uses (`backend/prahari/assistant.py`).
 2. **Retrieve:** your question is embedded, and the 4 most similar chunks are found. Chunks below
    0.58 similarity are dropped as irrelevant.
 3. **Live facts:** if the question is about *now* ("Is the primary healthy?", "What's the hit rate
@@ -533,7 +533,7 @@ The white 3D robot in the corner (`scenes/Robot3D.tsx`, built from scratch in th
    what happens when Redis is down…) are also given as plain sentences built from the live config,
    because a 3B model misreads tables.
 5. **Generate through the gateway itself.** The question goes to `/v1/chat/completions` like any
-   other client, with its own key (`aegis-assistant-key`). The chatbot is a live demo of the product:
+   other client, with its own key (`prahari-assistant-key`). The chatbot is a live demo of the product:
    it gets cached, traced and routed like everything else.
 6. **Show the evidence:**
    - citations [1], [2] point to the source documents;
@@ -668,7 +668,7 @@ preloaded in the background, so switching tabs takes about 0.2 s.
 | Lighthouse | Performance, accessibility, best practices | 3 pages × 2 devices |
 | Frame times (`make perf`) | Real fps on the Mac GPU | 6 scenarios |
 
-Some of the end-to-end tests worth reading (`frontend/e2e/aegis.spec.ts`):
+Some of the end-to-end tests worth reading (`frontend/e2e/prahari.spec.ts`):
 - "killing the primary turns its breaker red on the graph within 2 s";
 - "ten identical requests make one upstream call";
 - "the chatbot answers a docs question with a citation and a trace chip";
@@ -725,14 +725,14 @@ Each of these was measured, not guessed:
 ### Backend, in this order
 
 1. `backend/config/gateway.yaml`: the whole system's shape in one file (backends, models, keys, limits).
-2. `aegis/main.py`: how the app starts and wires everything together.
-3. `aegis/api/gateway.py`: the OpenAI-compatible endpoint.
-4. `aegis/pipeline.py`: **the request journey** (section 3). The most important file.
-5. `aegis/cache.py`, `aegis/coalesce.py`, `aegis/ratelimit.py`, `aegis/budget.py`: the stages.
-6. `aegis/router.py` and `aegis/breaker.py`: routing, hedging, failover (section 4).
-7. `aegis/events.py`, `aegis/metrics.py`, `aegis/telemetry.py`: visibility (section 5).
-8. `aegis/chaos.py` and `aegis/scenarios.py`: breaking things on purpose.
-9. `aegis/assistant.py`: the chatbot (section 7).
+2. `prahari/main.py`: how the app starts and wires everything together.
+3. `prahari/api/gateway.py`: the OpenAI-compatible endpoint.
+4. `prahari/pipeline.py`: **the request journey** (section 3). The most important file.
+5. `prahari/cache.py`, `prahari/coalesce.py`, `prahari/ratelimit.py`, `prahari/budget.py`: the stages.
+6. `prahari/router.py` and `prahari/breaker.py`: routing, hedging, failover (section 4).
+7. `prahari/events.py`, `prahari/metrics.py`, `prahari/telemetry.py`: visibility (section 5).
+8. `prahari/chaos.py` and `prahari/scenarios.py`: breaking things on purpose.
+9. `prahari/assistant.py`: the chatbot (section 7).
 10. `tests/test_gateway.py`: every behaviour, demonstrated as a test.
 
 ### Frontend, in this order
@@ -744,7 +744,7 @@ Each of these was measured, not guessed:
 5. `src/pages/Playground.tsx`: the simplest page that sends real requests.
 6. `src/pages/Architecture.tsx` with `components/arch/`: the flagship view.
 7. `src/scenes/`: the 3D scenes (Brain, Galaxy3D, Robot3D).
-8. `e2e/aegis.spec.ts`: what the whole site promises, as tests.
+8. `e2e/prahari.spec.ts`: what the whole site promises, as tests.
 
 ---
 
@@ -828,7 +828,7 @@ Do these with `make dev` running. Keep the Architecture page open in another win
 
 The first version worked; this pass made it safe to run for other people. Read these in order:
 
-1. **Secure by default** (`backend/aegis/security.py`). The gateway starts in production mode
+1. **Secure by default** (`backend/prahari/security.py`). The gateway starts in production mode
    unless told otherwise. A key is checked in constant time and only its public id travels any
    further. Tenants can only read their own requests, enforced in the SQL itself.
 2. **Bounded input** (`pipeline._check_limits`, `api/gateway._read_body`). Before any expensive

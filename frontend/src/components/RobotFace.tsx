@@ -1,4 +1,4 @@
-// AEGIS's living face: an LED dot-matrix drawn over the hover robot's screen, clipped to the
+// PRAHARI's living face: an LED dot-matrix drawn over the hover robot's screen, clipped to the
 // measured screen polygon. The expression follows real gateway state.
 import { motion } from "motion/react";
 import { useEffect, useId, useState } from "react";

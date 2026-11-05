@@ -187,7 +187,7 @@ export default function ControlRoom() {
         </div>
         <div className="flex items-center gap-3">
           <p className="text-right text-sm text-ink-soft">
-            AEGIS looks <strong className="text-ink">{mood === "happy" ? "content" : mood === "alarmed" ? "alarmed: a breaker is open" : mood === "concerned" ? "concerned: something is degraded" : "asleep"}</strong>
+            PRAHARI looks <strong className="text-ink">{mood === "happy" ? "content" : mood === "alarmed" ? "alarmed: a breaker is open" : mood === "concerned" ? "concerned: something is degraded" : "asleep"}</strong>
           </p>
           <HoverRobot interactive={false} className="w-28" sizes="112px" />
         </div>

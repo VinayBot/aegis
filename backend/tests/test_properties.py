@@ -12,9 +12,9 @@ from __future__ import annotations
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from aegis.cache import build_keys
-from aegis.guardrails.output import MAX_HOLD, StreamRedactor, redact_text
-from aegis.retry import full_jitter
+from prahari.cache import build_keys
+from prahari.guardrails.output import MAX_HOLD, StreamRedactor, redact_text
+from prahari.retry import full_jitter
 
 PIECES = st.sampled_from(
     [

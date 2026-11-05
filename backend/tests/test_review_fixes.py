@@ -8,8 +8,8 @@ import json
 import pytest
 import websockets
 
-from aegis.config import SafetyConfig
-from aegis.security import digest
+from prahari.config import SafetyConfig
+from prahari.security import digest
 from tests.conftest import Gateway, free_port, serve, stop
 from tests.fake_backend import FakeControl, GuardControl, build_guard_app
 
@@ -44,7 +44,7 @@ async def test_a_non_string_role_is_a_400_not_a_500(gateway: Gateway) -> None:
 async def test_an_unexpected_error_is_a_recorded_500(
     gateway: Gateway, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from aegis import guardrails
+    from prahari import guardrails
 
     async def boom(_: object) -> None:
         raise RuntimeError("bug")
@@ -62,7 +62,7 @@ async def test_websocket_cancel_before_the_first_token_settles_everything(
     fakes["primary"].first_token_delay = 1.0
     url = gateway.url.replace("http", "ws") + "/v1/ws/chat?key=k-demo"
     async with websockets.connect(url) as ws:
-        body = {"model": "aegis-chat", "messages": [{"role": "user", "content": "slow start"}]}
+        body = {"model": "prahari-chat", "messages": [{"role": "user", "content": "slow start"}]}
         await ws.send(json.dumps({"type": "chat", "id": "c1", "body": body}))
         await asyncio.sleep(0.2)  # inside routing, waiting for the first token
         await ws.send(json.dumps({"type": "cancel", "id": "c1"}))

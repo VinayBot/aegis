@@ -29,8 +29,8 @@ async def stoppable(
 ) -> AsyncIterator[tuple[Gateway, subprocess.Popen[bytes]]]:
     import uuid
 
-    from aegis.main import create_app
-    from aegis.settings import Settings
+    from prahari.main import create_app
+    from prahari.settings import Settings
 
     port = free_port()
     proc = subprocess.Popen(
@@ -63,7 +63,7 @@ async def stoppable(
     settings = Settings(
         env="dev",  # chaos (SIGSTOP) is dev-only
         config_path=cfg,
-        redis_prefix=f"aegistest-{uuid.uuid4().hex[:8]}",
+        redis_prefix=f"praharitest-{uuid.uuid4().hex[:8]}",
         ledger_path=tmp_path / "l.sqlite3",
         run_dir=run_dir,
         docs_dir=tmp_path,
@@ -88,7 +88,7 @@ async def test_sigstop_primary_breaker_opens_and_traffic_fails_over(
 ) -> None:
     gw, proc = stoppable
     ok = await gw.chat("before", headers={"cache-control": "no-cache"})
-    assert ok.headers["x-aegis-backend"] == "primary"
+    assert ok.headers["x-prahari-backend"] == "primary"
 
     r = await gw.client.post(
         "/api/chaos", json={"backend": "primary", "action": "kill", "value": True}
@@ -101,7 +101,7 @@ async def test_sigstop_primary_breaker_opens_and_traffic_fails_over(
 
     during = await gw.chat("during", headers={"cache-control": "no-cache"})
     assert during.status_code == 200
-    assert during.headers["x-aegis-backend"] == "fallback"  # hedged or failed over, no user error
+    assert during.headers["x-prahari-backend"] == "fallback"  # hedged or failed over, no user error
 
     breaker = gw.state.router.runtimes["primary"].breaker
     deadline = time.monotonic() + 5
@@ -113,12 +113,12 @@ async def test_sigstop_primary_breaker_opens_and_traffic_fails_over(
     primary = next(n for n in calls_before["nodes"] if n["id"] == "backend:primary")
     assert primary["breaker"]["state"] == "open"
     skipped = await gw.chat("skips primary", headers={"cache-control": "no-cache"})
-    assert skipped.headers["x-aegis-backend"] == "fallback"
+    assert skipped.headers["x-prahari-backend"] == "fallback"
 
     await gw.client.post(
         "/api/chaos", json={"backend": "primary", "action": "kill", "value": False}
     )
     breaker.opened_at = (breaker.opened_at or 0) - breaker.open_seconds  # fast-forward cool-down
     healed = await gw.chat("probe", headers={"cache-control": "no-cache"})
-    assert healed.headers["x-aegis-backend"] == "primary"
+    assert healed.headers["x-prahari-backend"] == "primary"
     assert breaker.current_state() == "closed"

@@ -4,11 +4,11 @@
 
 | Component | Runs as | Role |
 | --- | --- | --- |
-| Gateway | `uvicorn aegis.main:app` (FastAPI, async) on :8000 | the request path, control plane, WebSocket events, assistant |
-| MLX primary | `mlx_lm.server` on :8081, Qwen2.5-3B-Instruct 4-bit | first choice for `aegis-chat`; 4 slots (it batches; throughput stops growing past 4 here) |
+| Gateway | `uvicorn prahari.main:app` (FastAPI, async) on :8000 | the request path, control plane, WebSocket events, assistant |
+| MLX primary | `mlx_lm.server` on :8081, Qwen2.5-3B-Instruct 4-bit | first choice for `prahari-chat`; 4 slots (it batches; throughput stops growing past 4 here) |
 | Ollama fallback | `ollama serve` on :11434, llama3.2:3b | second choice; 2 slots |
 | LiteLLM adapter | the LiteLLM Python SDK as one backend | provider translation inside the gateway process |
-| LiteLLM proxy | the real `litellm --config` server on :4000 (`infra/litellm/config.yaml`) | an OpenAI-compatible proxy in front of Ollama; its retries off so AEGIS owns failover |
+| LiteLLM proxy | the real `litellm --config` server on :4000 (`infra/litellm/config.yaml`) | an OpenAI-compatible proxy in front of Ollama; its retries off so PRAHARI owns failover |
 | vLLM | `vllm serve` via the vllm-metal plugin on :8090, Qwen2.5-0.5B 4-bit | the real V1 engine (paged attention, continuous batching) on Apple Silicon; 8 slots |
 | Llama Guard 3 1B | on Ollama | content safety: input on cache misses, output before caching |
 | Redis Stack | Docker (Colima) on :6379 | exact cache, HNSW vector index, rate-limit buckets, budgets |
@@ -98,8 +98,8 @@ so one trace runs from a client app (NEXUS, Veritas) through the gateway to the 
 
 ## Security model
 
-- **Secure by default.** `AEGIS_ENV` defaults to `production`: the control plane needs an admin
-  credential (a YAML key with `role: admin`, or `AEGIS_ADMIN_KEY`), chaos is refused even if
+- **Secure by default.** `PRAHARI_ENV` defaults to `production`: the control plane needs an admin
+  credential (a YAML key with `role: admin`, or `PRAHARI_ADMIN_KEY`), chaos is refused even if
   switched on, plaintext keys in the YAML are ignored (only `sha256:` entries authenticate, so
   the repo's public demo keys cannot), and logs are JSON. `scripts/dev.sh` sets `dev`, where a
   loopback caller is the local operator, so the demo site needs no key, unless the browser says
@@ -139,7 +139,7 @@ map without a frontend change.
 ## Source map
 
 ```
-backend/aegis/
+backend/prahari/
   main.py          app factory, lifespan (build, warm, start background tasks, clean shutdown)
   pipeline.py      the request path, stage spans/events, bookkeeping
   router.py        slots, breakers, hedging, failover, relay

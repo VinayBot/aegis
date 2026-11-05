@@ -21,13 +21,13 @@ import yaml
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from redis.asyncio import Redis
 
-from aegis import telemetry
-from aegis.settings import Settings
+from prahari import telemetry
+from prahari.settings import Settings
 from tests.fake_backend import FakeControl, build_app
 
 REDIS_URL = "redis://127.0.0.1:6379/0"
 SPANS = InMemorySpanExporter()
-telemetry.setup_tracing("aegis-test", None, exporter=SPANS)
+telemetry.setup_tracing("prahari-test", None, exporter=SPANS)
 
 
 def free_port() -> int:
@@ -119,7 +119,7 @@ def write_config(tmp: Path, ports: dict[str, int], **overrides: Any) -> Path:
             },
         },
         "models": {
-            "aegis-chat": {
+            "prahari-chat": {
                 "chain": ["primary", "fallback"],
                 "price": {"input_per_1m": 1.0, "output_per_1m": 2.0, "reference": "test"},
             }
@@ -127,18 +127,26 @@ def write_config(tmp: Path, ports: dict[str, int], **overrides: Any) -> Path:
         "keys": {
             "k-demo": {"tenant": "demo", "tpm": 100000, "budget": {"soft": 10, "hard": 20}},
             # the key the built-in scenarios and Playground load tests send with
-            "aegis-demo-key": {"tenant": "demo", "tpm": 100000, "budget": {"soft": 10, "hard": 20}},
+            "prahari-demo-key": {
+                "tenant": "demo",
+                "tpm": 100000,
+                "budget": {"soft": 10, "hard": 20},
+            },
             "k-small": {"tenant": "small", "tpm": 200, "budget": {"soft": 10, "hard": 20}},
             "k-broke": {"tenant": "broke", "tpm": 100000, "budget": {"soft": 0.0, "hard": 0.0}},
             "k-other": {"tenant": "other", "tpm": 100000, "budget": {"soft": 10, "hard": 20}},
-            # the key the AEGIS assistant asks the gateway with
-            "aegis-assistant-key": {
-                "tenant": "aegis-bot",
+            # the key the PRAHARI assistant asks the gateway with
+            "prahari-assistant-key": {
+                "tenant": "prahari-bot",
                 "tpm": 100000,
                 "budget": {"soft": 10, "hard": 20},
             },
             # the key the built-in rate-limit flood sends with
-            "aegis-flood-key": {"tenant": "flood", "tpm": 300, "budget": {"soft": 10, "hard": 20}},
+            "prahari-flood-key": {
+                "tenant": "flood",
+                "tpm": 300,
+                "budget": {"soft": 10, "hard": 20},
+            },
             "k-admin": {
                 "id": "ops",
                 "tenant": "ops",
@@ -204,7 +212,7 @@ class Gateway:
         **body: Any,
     ) -> httpx.Response:
         payload = {
-            "model": "aegis-chat",
+            "model": "prahari-chat",
             "stream": stream,
             "messages": [{"role": "user", "content": prompt}],
             **body,
@@ -212,7 +220,7 @@ class Gateway:
         return await self.client.post(
             "/v1/chat/completions",
             json=payload,
-            headers={"authorization": f"Bearer {key}", "x-aegis-summary": "1", **(headers or {})},
+            headers={"authorization": f"Bearer {key}", "x-prahari-summary": "1", **(headers or {})},
         )
 
 
@@ -221,9 +229,9 @@ def sse_summary(text: str) -> dict[str, Any]:
 
     lines = text.splitlines()
     for i, line in enumerate(lines):
-        if line == "event: aegis":
+        if line == "event: prahari":
             return dict(json.loads(lines[i + 1][5:]))
-    raise AssertionError(f"no aegis summary in stream: {text[:300]}")
+    raise AssertionError(f"no prahari summary in stream: {text[:300]}")
 
 
 @pytest.fixture
@@ -233,7 +241,7 @@ async def gateway(
     require_redis: None,
     request: pytest.FixtureRequest,
 ) -> AsyncIterator[Gateway]:
-    from aegis.main import create_app
+    from prahari.main import create_app
 
     overrides = dict(getattr(request, "param", {}))
     ports = {n: c.port for n, c in fakes.items()}  # type: ignore[attr-defined]
@@ -246,7 +254,7 @@ async def gateway(
         jwt_secret=overrides.pop("jwt_secret", "test-jwt-secret-0123456789abcdef0123"),
         config_path=write_config(tmp_path, ports, **overrides),
         redis_url=REDIS_URL,
-        redis_prefix=f"aegistest-{uuid.uuid4().hex[:8]}",
+        redis_prefix=f"praharitest-{uuid.uuid4().hex[:8]}",
         ledger_path=tmp_path / "ledger.sqlite3",
         run_dir=tmp_path / "run",
         docs_dir=tmp_path / "docs",
@@ -259,7 +267,7 @@ async def gateway(
     app = create_app(settings)
     server, task = await serve(app, port)
     spans = InMemorySpanExporter()  # fresh per test: a shut-down exporter drops everything
-    telemetry.setup_tracing("aegis-test", None, exporter=spans)  # lifespan reset it
+    telemetry.setup_tracing("prahari-test", None, exporter=spans)  # lifespan reset it
     async with httpx.AsyncClient(base_url=settings.self_url, timeout=20) as client:
         gw = Gateway(client, app, settings.self_url, spans)
         gw.server, gw.task = server, task  # type: ignore[attr-defined]

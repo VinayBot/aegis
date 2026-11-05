@@ -1,4 +1,4 @@
-// AEGIS, the assistant: an original 3D robot modelled in three.js. A dark armoured sentinel that
+// PRAHARI, the assistant: an original 3D robot modelled in three.js. A dark armoured sentinel that
 // hovers: a graphite head with a black glass visor and one cyan scanner eye, armoured shoulders
 // with lit trim, a glowing core in the chest, two detached floating hands, a cone thruster in
 // place of legs streaming light onto a glowing disk, and a dashed ring in orbit round it all.

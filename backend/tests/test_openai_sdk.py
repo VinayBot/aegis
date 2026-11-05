@@ -22,7 +22,7 @@ def client(gateway: Gateway, key: str = "k-demo") -> openai.AsyncOpenAI:
 
 async def test_streaming_chat_through_the_sdk(gateway: Gateway) -> None:
     stream = await client(gateway).chat.completions.create(
-        model="aegis-chat",
+        model="prahari-chat",
         messages=[{"role": "user", "content": "hello from the openai sdk"}],
         stream=True,
         temperature=0,
@@ -36,12 +36,12 @@ async def test_streaming_chat_through_the_sdk(gateway: Gateway) -> None:
 
 async def test_non_streaming_chat_with_usage_and_headers(gateway: Gateway) -> None:
     raw = await client(gateway).chat.completions.with_raw_response.create(
-        model="aegis-chat", messages=[{"role": "user", "content": "non-streaming sdk"}]
+        model="prahari-chat", messages=[{"role": "user", "content": "non-streaming sdk"}]
     )
     completion = raw.parse()
     assert completion.choices[0].message.content.startswith("pong0")  # type: ignore[union-attr]
     assert completion.usage is not None and completion.usage.total_tokens > 0
-    assert raw.headers["x-cache"] in ("miss", "bypass") and raw.headers["x-aegis-trace-id"]
+    assert raw.headers["x-cache"] in ("miss", "bypass") and raw.headers["x-prahari-trace-id"]
 
 
 async def test_tool_calls_through_the_sdk(gateway: Gateway, fakes: dict[str, FakeControl]) -> None:
@@ -56,7 +56,7 @@ async def test_tool_calls_through_the_sdk(gateway: Gateway, fakes: dict[str, Fak
         }
     ]
     completion = await client(gateway).chat.completions.create(
-        model="aegis-chat",
+        model="prahari-chat",
         messages=[{"role": "user", "content": "weather in Mumbai?"}],
         tools=tools,  # type: ignore[arg-type]
     )
@@ -68,20 +68,20 @@ async def test_tool_calls_through_the_sdk(gateway: Gateway, fakes: dict[str, Fak
 
 async def test_models_list_through_the_sdk(gateway: Gateway) -> None:
     models = await client(gateway).models.list()
-    assert "aegis-chat" in {m.id for m in models.data}
+    assert "prahari-chat" in {m.id for m in models.data}
 
 
 async def test_the_sdk_raises_its_own_typed_errors(gateway: Gateway) -> None:
     msgs = [{"role": "user", "content": "x"}]
     with pytest.raises(openai.AuthenticationError):
         await client(gateway, key="wrong").chat.completions.create(
-            model="aegis-chat", messages=msgs
+            model="prahari-chat", messages=msgs
         )  # type: ignore[arg-type]
     with pytest.raises(openai.NotFoundError):
         await client(gateway).chat.completions.create(model="no-such-model", messages=msgs)  # type: ignore[arg-type]
     with pytest.raises(openai.BadRequestError):
         await client(gateway).chat.completions.create(
-            model="aegis-chat",
+            model="prahari-chat",
             messages=[
                 {
                     "role": "user",
@@ -90,8 +90,8 @@ async def test_the_sdk_raises_its_own_typed_errors(gateway: Gateway) -> None:
             ],
         )
     with pytest.raises(openai.RateLimitError) as info:
-        await client(gateway, key="aegis-flood-key").chat.completions.create(
-            model="aegis-chat",
+        await client(gateway, key="prahari-flood-key").chat.completions.create(
+            model="prahari-chat",
             messages=msgs,
             max_tokens=4000,  # 300 tpm key: over at once
         )

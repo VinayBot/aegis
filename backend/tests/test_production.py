@@ -12,7 +12,7 @@ import httpx
 import pytest
 import websockets
 
-from aegis.security import digest
+from prahari.security import digest
 from tests.conftest import Gateway, sse_summary, stop
 from tests.fake_backend import FakeControl
 
@@ -113,7 +113,7 @@ async def test_raw_api_keys_never_leave_the_gateway(gateway: Gateway) -> None:
         )
     ]
     for body in bodies:
-        assert "k-demo" not in body and "k-admin" not in body and "aegis-demo-key" not in body
+        assert "k-demo" not in body and "k-admin" not in body and "prahari-demo-key" not in body
     rows = await gateway.state.ledger.query("SELECT DISTINCT key_id FROM requests")
     assert rows and all(not r["key_id"].startswith("k-") for r in rows)
     redis_keys = [k async for k in gateway.state.redis.scan_iter(match="*:rl:*")]
@@ -159,7 +159,9 @@ async def test_input_bounds(gateway: Gateway, fakes: dict[str, FakeControl]) -> 
     h = {**auth("k-demo")}
 
     async def post(body: dict[str, object]) -> httpx.Response:
-        return await c.post("/v1/chat/completions", json={"model": "aegis-chat", **body}, headers=h)
+        return await c.post(
+            "/v1/chat/completions", json={"model": "prahari-chat", **body}, headers=h
+        )
 
     many = [{"role": "user", "content": "hi"}] * 4
     assert (await post({"messages": many})).json()["error"]["code"] == "too_many_messages"
@@ -193,10 +195,10 @@ async def test_prometheus_metrics(gateway: Gateway) -> None:
     r = await gateway.client.get("/metrics")
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/plain")
     text = r.text
-    assert 'aegis_requests_total{backend="primary",cache="miss"' in text
+    assert 'prahari_requests_total{backend="primary",cache="miss"' in text
     assert 'cache="exact"' in text
-    assert "aegis_time_to_first_token_seconds_bucket" in text
-    assert 'aegis_breaker_state{backend="primary"} 0.0' in text
+    assert "prahari_time_to_first_token_seconds_bucket" in text
+    assert 'prahari_breaker_state{backend="primary"} 0.0' in text
 
 
 @pytest.mark.parametrize("gateway", [PROD], indirect=True)

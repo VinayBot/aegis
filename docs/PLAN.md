@@ -10,10 +10,10 @@ this plan was executed as written and is kept as the record of how the work was 
 | 0. Vet and install skills | DESIGN.md, docs/SKILLS_REVIEW.md | `.claude/skills/` (git-ignored) |
 | 1. Gateway backend | the request path, control plane, tests | `backend/` |
 | 2. Design system | tokens, type, palette sampled from the robots | `frontend/src/styles/tokens.css`, DESIGN.md |
-| 3. Home scroll journey | hero, dive, proof strip, Meet AEGIS | `frontend/src/pages/Home.tsx`, `components/Dive.tsx`, `scenes/` |
+| 3. Home scroll journey | hero, dive, proof strip, Meet PRAHARI | `frontend/src/pages/Home.tsx`, `components/Dive.tsx`, `scenes/` |
 | 4. Architecture | live graph, packets, replay, self-check, export | `frontend/src/pages/Architecture.tsx`, `components/arch/` |
 | 5. The rest of the app | Control Room, Chaos Lab, Playground, Traces, Docs | `frontend/src/pages/` |
-| 6. AEGIS assistant | grounded answers through the gateway | `backend/aegis/assistant.py`, `frontend/src/components/Assistant.tsx`, `AssistantBot.tsx`, `scenes/Robot3D.tsx` |
+| 6. PRAHARI assistant | grounded answers through the gateway | `backend/prahari/assistant.py`, `frontend/src/components/Assistant.tsx`, `AssistantBot.tsx`, `scenes/Robot3D.tsx` |
 | 7. Motion language | tokens, sky shader, reveals, ticker | `frontend/src/components/fx/`, `styles/app.css` |
 | 8. Quality pass | tests, e2e, Lighthouse, frame times, memory, audit | docs/VALIDATION_REPORT.md |
 
@@ -26,7 +26,7 @@ assignment5/
   backend/
     pyproject.toml         uv project (Python 3.12)
     config/gateway.yaml    backends, model chains, keys, cache/router/breaker tuning (hot-reloaded)
-    aegis/                 the gateway (see ARCHITECTURE.md, Source map)
+    prahari/                 the gateway (see ARCHITECTURE.md, Source map)
     tests/                 61 tests: units, HTTP end-to-end with fake backends, SIGSTOP integration
   frontend/
     src/                   React 19 + TypeScript
