@@ -34,7 +34,7 @@ and events.
 | 21 | Fallback chains | `models:` chains in [gateway.yaml](backend/config/gateway.yaml); [router.py](backend/aegis/router.py) | `test_failover_on_upstream_5xx`; Chaos Lab "Primary crashes" |
 | 21 | Rate limiting | Lua token bucket per key, refunds, 429 + Retry-After ([ratelimit.py](backend/aegis/ratelimit.py)) | `test_rate_limit_*`; "Rate-limit flood" |
 | 21 | Cost tracking | Per-request est. cloud cost and savings, tenant budgets ([ledger.py](backend/aegis/ledger.py), [budget.py](backend/aegis/budget.py)), Langfuse cost per generation | `test_hard_budget_blocks`; Control Room |
-| 21 | Streaming | SSE relay from an async generator, OpenAI chunk format | `test_streams_openai_sse_*`; `scripts/demo_stream.sh` |
+| 21 | Streaming | SSE relay from an async generator, OpenAI chunk format; verified with the official OpenAI Python SDK | `tests/test_openai_sdk.py`; `scripts/demo_stream.sh` |
 | 22 | vLLM local deployment | Real `vllm serve` (V1 engine, paged attention, continuous batching) via vllm-metal, model `aegis-vllm` | [Batching benchmark](docs/evidence/serving_bench.json): 249 → 1,036 tok/s from 1 to 8 concurrent requests (`make bench-serving`) |
 | 22 | Langfuse tracing | OTLP + Basic auth to Langfuse beside Jaeger, with Langfuse trace/user/generation attributes ([telemetry.py](backend/aegis/telemetry.py)); user feedback ratings as Langfuse scores (`POST /v1/feedback`, [feedback.py](backend/aegis/feedback.py)); self-hosted stack in [infra/langfuse](infra/langfuse/docker-compose.yml) | Verified on Langfuse 4.67.0: [traces](docs/evidence/langfuse-traces.png), [one trace](docs/evidence/langfuse-trace.png); `test_feedback_becomes_a_langfuse_score` |
 | 22 | OpenTelemetry | One trace per request, one span per stage, GenAI semantic conventions, W3C `traceparent` propagation from callers; Prometheus `/metrics` ([prom.py](backend/aegis/prom.py)) with SLO burn-rate alerts ([alerts.yml](infra/prometheus/alerts.yml), unit-tested with promtool) | Traces tab; `test_a_callers_traceparent_continues_into_the_gateway`; `make alerts` |
@@ -46,7 +46,7 @@ and events.
 | 24 | WebSockets | `/v1/ws/chat` (full duplex, mid-stream cancel) and `/ws/events` (live events) | Playground "Transport: WebSocket" and Stop |
 | 25 | Architecture | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), the live map; API keys or short-lived JWTs with tenant and role ([security.py](backend/aegis/security.py)) | Architecture tab; `tests/test_jwt.py` |
 | 25 | Peer auditing | [docs/PEER_AUDIT.md](docs/PEER_AUDIT.md): a 30-minute audit guide and 27 findings already fixed: 10 from an independent review, 3 from property-based testing | |
-| 25 | Production readiness | [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md): the capstone checklist with evidence, SLOs, runbook, known gaps | CI, `make image` |
+| 25 | Production readiness | [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md): the capstone checklist with evidence, SLOs, alerts, runbook, known gaps; Kubernetes manifests in [deploy/k8s](deploy/k8s) | CI, `make image`, `make k8s` |
 | 25 | Final demonstration | [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) | |
 
 ## Run it

@@ -296,3 +296,18 @@ The MLX backend had 1 slot because older mlx-lm served one request at a time. ml
 (`--decode-concurrency`, default 32), and `make bench-serving` shows its throughput growing x3.5
 up to 4 concurrent requests and flattening after, so 4 slots it is. The load test went from 8.5 to
 18.4 req/s and its p95 from 6.8 s to 2.5 s.
+
+## Kubernetes: one replica, said plainly
+
+`deploy/k8s` runs the gateway at the `restricted` pod security level with a startup probe (the
+embedder and the docs index load at start), liveness on `/healthz` and readiness on `/readyz`, so
+a pod whose backends are all down leaves the load balancer instead of failing requests. One
+replica with a volume and the `Recreate` strategy, because the ledger is SQLite and coalescing is
+in-process; an HPA on top would split the ledger across pods. The scaling path (Postgres ledger,
+Redis singleflight) is in PRODUCTION_READINESS.md.
+
+## Compatibility proven with the OpenAI SDK
+
+Raw HTTP tests show the wire format; `tests/test_openai_sdk.py` shows the promise: the official
+`openai` client, pointed at the gateway with two settings, streams, receives tool calls, lists
+models and raises its own typed errors (`AuthenticationError`, `RateLimitError`...).

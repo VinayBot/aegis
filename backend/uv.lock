@@ -37,6 +37,7 @@ litellm = [
 dev = [
     { name = "hypothesis" },
     { name = "mypy" },
+    { name = "openai" },
     { name = "pip-audit" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -76,6 +77,7 @@ provides-extras = ["litellm"]
 dev = [
     { name = "hypothesis", specifier = ">=6.112" },
     { name = "mypy", specifier = ">=1.13" },
+    { name = "openai", specifier = ">=1.50" },
     { name = "pip-audit", specifier = ">=2.7" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-asyncio", specifier = ">=0.24" },

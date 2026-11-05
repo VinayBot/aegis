@@ -4,7 +4,7 @@
 VLLM_WHEEL := https://github.com/vllm-project/vllm/releases/download/v0.32.0/vllm-0.32.0%2Bcpu-cp38-abi3-macosx_11_0_arm64.whl
 VLLM_METAL_WHEEL := https://github.com/vllm-project/vllm-metal/releases/download/v0.32.0/vllm_metal-0.32.0-cp312-cp312-macosx_15_0_arm64.whl
 
-.PHONY: perf sweep setup setup-serving evals evals-live loadtest image bench-serving alerts langfuse-up langfuse-down infra dev test test-backend test-frontend e2e lint typecheck build serve record-fixture memory assets clean
+.PHONY: perf sweep setup setup-serving evals evals-live loadtest image bench-serving alerts k8s langfuse-up langfuse-down infra dev test test-backend test-frontend e2e lint typecheck build serve record-fixture memory assets clean
 
 setup: ## install everything (Python deps, spaCy model, Node deps, Playwright browser, models)
 	cd backend && uv sync --extra litellm  # LiteLLM is the optional adapter; installed so it can be demonstrated
@@ -107,3 +107,7 @@ bench-serving: ## vLLM vs MLX throughput at 1, 2, 4 and 8 concurrent requests (n
 alerts: ## validate and unit-test the Prometheus alerting rules (promtool in Docker)
 	docker run --rm -v "$(CURDIR)/infra/prometheus":/r -w /r --entrypoint promtool prom/prometheus:v2.55.1 check rules alerts.yml
 	docker run --rm -v "$(CURDIR)/infra/prometheus":/r -w /r --entrypoint promtool prom/prometheus:v2.55.1 test rules alerts_test.yml
+
+k8s: ## render the Kubernetes manifests and validate them strictly against the schemas
+	docker run --rm -v "$(CURDIR)/deploy/k8s":/k -w /k registry.k8s.io/kustomize/kustomize:v5.4.3 build . > /tmp/aegis-k8s.yaml
+	docker run --rm -v /tmp:/t ghcr.io/yannh/kubeconform:v0.6.7 -strict -summary /t/aegis-k8s.yaml

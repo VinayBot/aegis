@@ -1,0 +1,76 @@
+# One replica on purpose: the usage ledger is SQLite on a volume and request coalescing is
+# in-process (docs/PRODUCTION_READINESS.md, Known gaps). Rate limits, budgets and caches are in
+# Redis already, so scaling out needs only a shared ledger (Postgres) and Redis singleflight.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aegis-gateway
+  namespace: aegis
+  labels: {app.kubernetes.io/name: aegis-gateway}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}   # one writer for the SQLite ledger at a time
+  selector:
+    matchLabels: {app.kubernetes.io/name: aegis-gateway}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: aegis-gateway}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      terminationGracePeriodSeconds: 20   # uvicorn drains for 10 s, then the lifespan cleans up
+      containers:
+        - name: gateway
+          image: ghcr.io/vinaybot/aegis-gateway:1.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - {name: http, containerPort: 8000}
+          envFrom:
+            - configMapRef: {name: aegis-config}
+            - secretRef: {name: aegis-secrets}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 500m, memory: 768Mi}
+            limits: {memory: 1536Mi}   # measured: ~720 MiB steady, 444 MiB peak for the docs index
+          startupProbe:                # the embedder and the docs index load at start
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+            failureThreshold: 36
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 15
+            timeoutSeconds: 3
+          readinessProbe:              # 503 while no backend can serve: traffic goes elsewhere
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+            timeoutSeconds: 3
+          volumeMounts:
+            - {name: config, mountPath: /app/backend/config, readOnly: true}
+            - {name: var, mountPath: /app/var}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: config
+          configMap:
+            name: aegis-gateway-yaml
+        - name: var
+          persistentVolumeClaim: {claimName: aegis-ledger}
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: aegis-ledger
+  namespace: aegis
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: {storage: 2Gi}

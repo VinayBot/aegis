@@ -62,6 +62,16 @@ jobs:
           docker run --rm -v "$PWD/infra/prometheus":/r -w /r --entrypoint promtool \
             prom/prometheus:v2.55.1 test rules alerts_test.yml
 
+  k8s:
+    # The Kubernetes manifests render with kustomize and validate strictly against the schemas.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: kustomize build + kubeconform
+        run: |
+          docker run --rm -v "$PWD/deploy/k8s":/k -w /k registry.k8s.io/kustomize/kustomize:v5.4.3 build . > /tmp/rendered.yaml
+          docker run --rm -v /tmp:/t ghcr.io/yannh/kubeconform:v0.6.7 -strict -summary /t/rendered.yaml
+
   image:
     # The production image: build it, run it with no model servers at all, and check that it is
     # alive, honestly not ready, and secure by default (control plane refuses an anonymous caller).
@@ -85,3 +95,9 @@ jobs:
           docker logs aegis 2>&1 | head -5 | grep -q '"level"'                                    # JSON logs
       - if: always()
         run: docker logs aegis 2>&1 | tail -40
+      - name: SBOM of the image (SPDX)
+        uses: anchore/sbom-action@v0
+        with: {image: "aegis-gateway:ci", format: spdx-json, output-file: sbom.spdx.json, upload-artifact: true}
+      - name: vulnerability report (Trivy, report only; fixed upstream CVEs are bumped by Dependabot)
+        uses: aquasecurity/trivy-action@0.28.0
+        with: {image-ref: "aegis-gateway:ci", severity: "CRITICAL,HIGH", ignore-unfixed: true, exit-code: "0", format: table}
