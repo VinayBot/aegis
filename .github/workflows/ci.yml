@@ -99,5 +99,5 @@ jobs:
         uses: anchore/sbom-action@v0
         with: {image: "aegis-gateway:ci", format: spdx-json, output-file: sbom.spdx.json, upload-artifact: true}
       - name: vulnerability report (Trivy, report only; fixed upstream CVEs are bumped by Dependabot)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with: {image-ref: "aegis-gateway:ci", severity: "CRITICAL,HIGH", ignore-unfixed: true, exit-code: "0", format: table}
