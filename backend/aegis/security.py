@@ -45,6 +45,10 @@ ADMIN_ENV_KEY_ID = "admin-env"
 
 
 def digest(key: str) -> str:
+    """SHA-256 of an API key. Keys are random tokens with 128+ bits of entropy, not passwords:
+    a slow password hash (bcrypt, Argon2) defends low-entropy secrets against guessing and would
+    cost tens of milliseconds on every request here. A fast hash is the standard for API tokens
+    (GitHub, Stripe). Guessing is also throttled (FailureLimiter)."""
     return hashlib.sha256(key.encode()).hexdigest()
 
 

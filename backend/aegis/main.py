@@ -186,10 +186,13 @@ def _mount_site(app: FastAPI, settings: Settings) -> None:
 
     @app.get("/{path:path}", include_in_schema=False)
     async def spa(path: str) -> FileResponse:
-        candidate = dist / path
-        if path and candidate.is_file() and dist in candidate.resolve().parents:
+        # resolve first, then check the result stays inside the built site, and only then touch
+        # the filesystem: "../" or a symlink can never reach a file outside it
+        root = dist.resolve()
+        candidate = (root / path).resolve()
+        if path and candidate.is_relative_to(root) and candidate.is_file():
             return FileResponse(candidate)
-        return FileResponse(dist / "index.html")
+        return FileResponse(root / "index.html")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

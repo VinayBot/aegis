@@ -256,10 +256,14 @@ def settings_facts(state: AppState) -> str:
             f"- Semantic cache: a cosine similarity of at least {ca.semantic_threshold:g} is a hit; only "
             f"last messages under {ca.semantic_max_tokens} tokens are looked up; entries live "
             f"{ca.ttl_seconds // 3600} hours; a lookup slower than {ca.embed_budget_ms} ms is skipped.",
-            f"- Embeddings for the semantic cache: {state.settings.embedder_model} (bge-small, "
-            "384 dimensions), computed on the CPU inside the gateway process.",
-            "- Coalescer: identical requests in flight at the same moment share one upstream call; "
-            "the first is the leader, the others follow its stream.",
+            (
+                f"- Embeddings for the semantic cache: {state.settings.embedder_model} (bge-small, "
+                "384 dimensions), computed on the CPU inside the gateway process."
+            ),
+            (
+                "- Coalescer: identical requests in flight at the same moment share one upstream "
+                "call; the first is the leader, the others follow its stream."
+            ),
             "- If Redis is down: the exact and semantic caches are skipped, rate limits fall back to "
             "an in-process token bucket, and health shows degraded; requests are still answered.",
             "- If a backend dies mid-stream: the client gets an SSE error event, tokens are estimated "
