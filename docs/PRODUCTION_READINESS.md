@@ -43,7 +43,7 @@ phrasing ("forget everything you were told before").
 
 | Suite | Result |
 | --- | --- |
-| Backend: unit, HTTP integration against fake model servers and real Redis, SIGSTOP, eval gate, property-based (Hypothesis) | 168 passed, 91% line coverage (CI floor 85%) |
+| Backend: unit, HTTP integration against fake model servers and real Redis, SIGSTOP, eval gate, property-based (Hypothesis) | 174 passed, 92% line coverage (CI floor 85%) |
 | Code health | ruff with complexity <= 12, strict mypy, strict TypeScript, pre-commit |
 | Frontend unit (vitest) | 7 passed |
 | End to end on the real system (Playwright) | 21 passed |

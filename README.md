@@ -25,7 +25,7 @@ and events.
 | [docs/PEER_AUDIT.md](docs/PEER_AUDIT.md) | 27 findings, how each was found and fixed |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | why each choice was made, and what was rejected |
 | [docs/evidence/](docs/evidence/) | Langfuse screenshots, load test, serving benchmark |
-| CI on the latest commit | lint, strict types, 168 tests (91% coverage), eval gate, audits, image smoke test, alert tests, CodeQL |
+| CI on the latest commit | lint, strict types, 174 tests (92% coverage), eval gate, audits, image smoke test, alert tests, CodeQL |
 
 ## Week 5 coverage
 
@@ -76,7 +76,7 @@ Other targets:
 
 | Target | What it does |
 | --- | --- |
-| `make test` | backend (168, including property-based) and frontend tests; needs `make infra` for Redis |
+| `make test` | backend (174, including property-based and OpenAI SDK) and frontend tests; needs `make infra` for Redis |
 | `make evals` / `make evals-live` | the evaluation gate (offline / with Llama Guard) |
 | `make e2e` | 21 browser tests against `make dev` |
 | `make loadtest` | throughput and latency percentiles against `make dev` |
