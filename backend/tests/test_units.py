@@ -671,3 +671,25 @@ async def test_hybrid_retrieval_declines_off_topic_questions(tmp_path: Path) -> 
     )
     hits = await index.search("Who painted the Mona Lisa?")  # type: ignore[attr-defined]
     assert not [c for c, _, ok in hits if ok and c.source == "docs/A.md"]
+
+
+async def test_the_site_route_only_serves_files_of_the_built_site(tmp_path: Path) -> None:
+    import httpx
+
+    from aegis.main import _mount_site
+    from aegis.settings import Settings
+
+    dist = tmp_path / "frontend" / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<html>site</html>")
+    (dist / "robots.txt").write_text("ok")
+    (tmp_path / "secret.txt").write_text("do not serve")
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    _mount_site(app, Settings(project_dir=tmp_path))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        assert (await c.get("/robots.txt")).text == "ok"
+        assert (await c.get("/some/page")).text == "<html>site</html>"  # SPA fallback
+        for attack in ("/../secret.txt", "/%2e%2e/secret.txt", "/..%2fsecret.txt"):
+            assert "do not serve" not in (await c.get(attack)).text

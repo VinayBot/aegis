@@ -183,16 +183,20 @@ def _mount_site(app: FastAPI, settings: Settings) -> None:
     if not dist.exists():
         return
     app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
+    root = dist.resolve()
+    index = root / "index.html"
+    site_files = {
+        f.relative_to(root).as_posix(): f
+        for f in root.rglob("*")
+        if f.is_file() and not f.is_symlink()
+    }
 
     @app.get("/{path:path}", include_in_schema=False)
     async def spa(path: str) -> FileResponse:
-        # resolve first, then check the result stays inside the built site, and only then touch
-        # the filesystem: "../" or a symlink can never reach a file outside it
-        root = dist.resolve()
-        candidate = (root / path).resolve()
-        if path and candidate.is_relative_to(root) and candidate.is_file():
-            return FileResponse(candidate)
-        return FileResponse(root / "index.html")
+        # the request only selects from files listed at startup; it never builds a path, so
+        # "../" or a symlink cannot reach anything outside the built site
+        target = site_files.get(path)
+        return FileResponse(target if target is not None else index)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
